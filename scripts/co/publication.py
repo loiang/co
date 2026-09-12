@@ -70,21 +70,58 @@ def _remote_tag_commit(root: Path, tag: str) -> str | None:
 
 
 def _pending(
-    root: Path, source_rev: str, assets: tuple[Path, ...]
+    root: Path,
+    source_rev: str,
+    assets: tuple[Path, ...],
+    *,
+    archive_completed: bool,
 ) -> dict[str, Any] | None:
     path = root / ".states/co/publish/pending.json"
     if not path.exists():
         return None
     record = read_json(path)
-    if record.get("sourceRev") != source_rev:
-        raise LifecycleError("存在属于其他 source commit 的待续发布记录")
     tag = record.get("tag")
     if not isinstance(tag, str) or TAG_RE.fullmatch(tag) is None:
         raise LifecycleError("待续发布记录含无效 tag")
+    if record.get("sourceRev") != source_rev:
+        _archive_released_pending(path, record, persist=archive_completed)
+        return None
     expected_assets = [str(path.relative_to(root)) for path in assets]
     if record.get("assets") != expected_assets:
         raise LifecycleError("待续发布记录与当前 build assets 不一致")
     return record
+
+
+def _archive_released_pending(
+    path: Path, record: dict[str, Any], *, persist: bool
+) -> None:
+    """Move one completed prior-source retry record into immutable history."""
+    if record.get("phase") != "released":
+        raise LifecycleError("存在属于其他 source commit 的待续发布记录")
+    source_rev = record.get("sourceRev")
+    tag = record.get("tag")
+    assets = record.get("assets")
+    valid = (
+        isinstance(source_rev, str)
+        and re.fullmatch(r"[0-9a-f]{40,64}", source_rev) is not None
+        and isinstance(tag, str)
+        and TAG_RE.fullmatch(tag) is not None
+        and tag.endswith(f"-{source_rev[:10]}")
+        and isinstance(assets, list)
+        and all(isinstance(asset, str) for asset in assets)
+    )
+    if not valid:
+        raise LifecycleError("已完成待续发布记录身份无效，拒绝归档")
+    if not persist:
+        return
+    completed = path.parent / "completed" / f"{tag}.json"
+    if completed.exists():
+        if read_json(completed) != record:
+            raise LifecycleError(f"已归档发布记录内容冲突: {tag}")
+        path.unlink()
+        return
+    completed.parent.mkdir(parents=True, exist_ok=True)
+    path.replace(completed)
 
 
 def _ensure_local_tag(root: Path, tag: str, source_rev: str) -> None:
@@ -161,7 +198,7 @@ def publish(repository: Path, *, dry_run: bool = False) -> str:
     _require_origin(root)
     source_rev = head(root)
     assets = require_release_records(root)
-    pending = _pending(root, source_rev, assets)
+    pending = _pending(root, source_rev, assets, archive_completed=not dry_run)
     tag = str(pending["tag"]) if pending else f"co-{timestamp()}-{source_rev[:10]}"
     if TAG_RE.fullmatch(tag) is None:
         raise LifecycleError(f"生成的 release tag 无效: {tag}")
