@@ -570,6 +570,12 @@ pub(crate) enum AppEvent {
     /// Archive the current active main thread and exit after it succeeds.
     ArchiveCurrentThread,
 
+    /// Plan a global local archive while preserving the currently displayed thread family.
+    PrepareArchiveExcept,
+
+    /// Execute a previously confirmed archive-except candidate set.
+    ConfirmArchiveExcept(codex_state::ArchiveExceptPlan),
+
     /// Permanently delete the current active main thread and exit after it succeeds.
     DeleteCurrentThread,
 

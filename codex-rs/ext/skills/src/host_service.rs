@@ -8,7 +8,6 @@ use std::sync::Weak;
 
 use codex_config::ConfigLayerStack;
 use codex_config::SkillConfigRules;
-use codex_config::bundled_skills_enabled_from_stack;
 use codex_config::skill_config_rules_from_stack;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::LOCAL_FS;
@@ -27,7 +26,7 @@ use codex_skills::SkillLoadFuture;
 use codex_skills::SkillRootLoadRequest;
 use codex_skills::SkillRootLoader;
 use codex_skills::SkillRootSnapshots;
-use codex_skills::install_system_skills;
+use codex_skills::remove_system_skills;
 
 use crate::HostSkillsSnapshot;
 use crate::SkillLoadOutcome;
@@ -118,13 +117,17 @@ impl HostSkillsRequest<'_> {
 }
 
 impl HostSkillsService {
-    pub fn new(codex_home: AbsolutePathBuf, bundled_skills_enabled: bool) -> Self {
-        Self::new_with_restriction_product(codex_home, bundled_skills_enabled, Some(Product::Codex))
+    pub fn new(codex_home: AbsolutePathBuf, _bundled_skills_enabled: bool) -> Self {
+        Self::new_with_restriction_product(
+            codex_home,
+            _bundled_skills_enabled,
+            Some(Product::Codex),
+        )
     }
 
     pub fn new_with_restriction_product(
         codex_home: AbsolutePathBuf,
-        bundled_skills_enabled: bool,
+        _bundled_skills_enabled: bool,
         restriction_product: Option<Product>,
     ) -> Self {
         let service = Self {
@@ -135,11 +138,7 @@ impl HostSkillsService {
             cache_by_config: RwLock::new(VecDeque::new()),
             root_scan_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_ROOT_SCANS)),
         };
-        // The cache is shared by every process using this CODEX_HOME. Disabled services filter
-        // system roots when loading rather than mutating shared state.
-        if bundled_skills_enabled {
-            service.ensure_system_skills_installed();
-        }
+        service.remove_system_skills();
         service
     }
 
@@ -199,8 +198,7 @@ impl HostSkillsService {
 
     /// Returns filesystem roots whose changes should invalidate discovered host skills.
     ///
-    /// Plugin roots have their own lifecycle invalidation, and bundled roots are installed before
-    /// filesystem watching begins.
+    /// Plugin roots have their own lifecycle invalidation.
     pub async fn watchable_skill_root_paths(
         &self,
         input: &HostSkillsLoadInput,
@@ -219,10 +217,6 @@ impl HostSkillsService {
         input: &HostSkillsLoadInput,
         fs: Option<Arc<dyn ExecutorFileSystem>>,
     ) -> Vec<HostSkillRoot> {
-        let bundled_skills_enabled = bundled_skills_enabled_from_stack(&input.config_layer_stack);
-        if bundled_skills_enabled {
-            self.ensure_system_skills_installed();
-        }
         let mut roots = resolve_skill_roots(
             fs,
             &input.config_layer_stack,
@@ -231,9 +225,7 @@ impl HostSkillsService {
             self.extra_roots(),
         )
         .await;
-        if !bundled_skills_enabled {
-            roots.retain(|root| root.scope != SkillScope::System);
-        }
+        roots.retain(|root| root.scope != SkillScope::System);
         roots
     }
 
@@ -244,10 +236,6 @@ impl HostSkillsService {
         fs: Option<Arc<dyn ExecutorFileSystem>>,
         request_root_snapshots: Option<&RequestSkillRootSnapshots>,
     ) -> HostSkillsSnapshot {
-        let bundled_skills_enabled = bundled_skills_enabled_from_stack(&input.config_layer_stack);
-        if bundled_skills_enabled {
-            self.ensure_system_skills_installed();
-        }
         let use_cwd_cache = fs.is_some();
         let cache_snapshot_by_cwd = use_cwd_cache && input.effective_skill_roots.is_empty();
         if cache_snapshot_by_cwd
@@ -265,9 +253,7 @@ impl HostSkillsService {
             self.extra_roots(),
         )
         .await;
-        if !bundled_skills_enabled {
-            roots.retain(|root| root.scope != SkillScope::System);
-        }
+        roots.retain(|root| root.scope != SkillScope::System);
         let skill_config_rules = skill_config_rules_from_stack(&input.config_layer_stack);
         let snapshot = if use_cwd_cache {
             let cache_key = config_skills_cache_key(
@@ -409,9 +395,9 @@ impl HostSkillsService {
         }
     }
 
-    fn ensure_system_skills_installed(&self) {
-        if let Err(err) = install_system_skills(&self.codex_home) {
-            tracing::error!("failed to install system skills: {err}");
+    fn remove_system_skills(&self) {
+        if let Err(err) = remove_system_skills(&self.codex_home) {
+            tracing::error!("failed to remove system skills: {err}");
         }
     }
 }

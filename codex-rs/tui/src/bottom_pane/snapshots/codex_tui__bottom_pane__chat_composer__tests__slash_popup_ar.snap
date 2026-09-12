@@ -1,5 +1,6 @@
 ---
 source: tui/src/bottom_pane/chat_composer.rs
+assertion_line: 9574
 expression: terminal.backend()
 ---
 "› /archive  archive this session                            "

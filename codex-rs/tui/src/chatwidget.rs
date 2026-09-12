@@ -317,6 +317,7 @@ use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 mod activity_groups;
 mod activity_presentation;
+mod archive_except;
 mod command_lifecycle;
 mod connector_mentions;
 mod connectors;

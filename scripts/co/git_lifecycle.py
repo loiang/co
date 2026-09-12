@@ -1,0 +1,294 @@
+"""Create isolated upgrade candidates by merging a fixed upstream commit.
+
+The published main line is never rewritten. Each upgrade starts from that line
+in a new worktree and merges upstream history, preserving customization commits.
+"""
+
+import re
+import shlex
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+from common import (
+    LifecycleError,
+    git,
+    git_flake,
+    head,
+    require_clean,
+    require_repo,
+    run,
+    timestamp,
+)
+
+UPSTREAM_FILE = Path(".co/upstream-rev")
+SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """Describe a candidate worktree without making it the active checkout.
+
+    Attributes:
+        root: Candidate worktree path.
+        branch: Candidate branch name.
+        upstream_rev: Full fetched upstream commit ID.
+        changed: Whether a new candidate was created.
+    """
+
+    root: Path
+    branch: str
+    upstream_rev: str
+    changed: bool
+
+
+class CandidateConflict(LifecycleError):
+    """Preserve a conflicted merge and expose deterministic continuation steps."""
+
+
+def _succeeds(root: Path, *args: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        cwd=root,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
+def _recorded_upstream(root: Path) -> str:
+    path = root / UPSTREAM_FILE
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise LifecycleError(f"缺少 tracked upstream baseline: {path}") from error
+    if not SHA_RE.fullmatch(value):
+        raise LifecycleError(f"upstream baseline 不是完整 Git SHA: {value}")
+    if not _succeeds(root, "cat-file", "-e", f"{value}^{{commit}}"):
+        raise LifecycleError(f"upstream baseline object 不存在: {value}")
+    return value
+
+
+def _resolve_target(root: Path, revision: str) -> str:
+    git(root, "fetch", "--prune", "upstream")
+    target = git(root, "rev-parse", f"{revision}^{{commit}}")
+    if not SHA_RE.fullmatch(target):
+        raise LifecycleError(f"目标 revision 未解析为完整 Git SHA: {target}")
+    if not _succeeds(root, "merge-base", "--is-ancestor", target, "upstream/main"):
+        raise LifecycleError(f"目标 revision 不在 fetched upstream/main 上: {target}")
+    return target
+
+
+def _candidate_identity(root: Path, target: str, created_at: str) -> tuple[str, Path]:
+    suffix = f"{created_at}-{target[:10]}"
+    branch = f"upgrade/{suffix}"
+    worktree = root / ".states" / "worktrees" / suffix
+    if _succeeds(root, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"):
+        raise LifecycleError(f"candidate branch 已存在，拒绝覆盖: {branch}")
+    if worktree.exists():
+        raise LifecycleError(f"candidate worktree 已存在，拒绝覆盖: {worktree}")
+    return branch, worktree
+
+
+def _merge_upstream(
+    source_root: Path,
+    source_head: str,
+    candidate: Candidate,
+    ni_repository: Path,
+) -> None:
+    candidate.root.parent.mkdir(parents=True, exist_ok=True)
+    git(
+        source_root,
+        "worktree",
+        "add",
+        "-b",
+        candidate.branch,
+        str(candidate.root),
+        source_head,
+    )
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(candidate.root),
+            "merge",
+            "--no-edit",
+            candidate.upstream_rev,
+        ],
+        cwd=candidate.root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if not result.returncode:
+        return
+    detail = (result.stderr or result.stdout or "").strip()
+    quoted_worktree = shlex.quote(str(candidate.root))
+    quoted_target = shlex.quote(candidate.upstream_rev)
+    command = (
+        f"GIT_EDITOR=true git -C {quoted_worktree} merge --continue\n"
+        f"just --justfile {quoted_worktree}/justfile co-upgrade-finalize "
+        f"--upstream-rev {quoted_target} "
+        f"--ni-repo {shlex.quote(str(ni_repository.resolve()))}"
+    )
+    raise CandidateConflict(
+        f"upstream merge 冲突；worktree 已保留: {candidate.root}\n"
+        f"{detail}\n续做命令:\n{command}"
+    )
+
+
+def create_upgrade_candidate(
+    repository: Path,
+    revision: str = "upstream/main",
+    created_at: str | None = None,
+    ni_repository: Path = Path("/repo/ni"),
+) -> Candidate:
+    """Merge a fixed upstream commit into a new isolated worktree.
+
+    Args:
+        repository: Current published candidate checkout.
+        revision: Upstream ref or commit to resolve after fetching upstream.
+        created_at: Fixed UTC name component used by deterministic tests.
+
+    Returns:
+        Candidate identity; ``changed`` is false for the same upstream SHA.
+
+    Raises:
+        CandidateConflict: Git leaves a conflicted merge for manual recovery.
+        LifecycleError: Repository, ancestry, cleanliness, or identity fails.
+    """
+    root = require_repo(repository)
+    require_clean(root)
+    source_branch = git(root, "branch", "--show-current")
+    if source_branch != "main" and not source_branch.startswith("custom/"):
+        raise LifecycleError(
+            f"upgrade 只能从 main 或初始化 custom/* 启动: {source_branch}"
+        )
+    source_head = head(root)
+    baseline = _recorded_upstream(root)
+    target = _resolve_target(root, revision)
+    if not _succeeds(root, "merge-base", "--is-ancestor", baseline, source_head):
+        raise LifecycleError("tracked upstream baseline 不是当前 candidate 的 ancestor")
+    if not _succeeds(root, "merge-base", "--is-ancestor", baseline, target):
+        raise LifecycleError("目标 upstream revision 早于 tracked baseline，拒绝降级")
+    if target == baseline:
+        return Candidate(root, source_branch, target, changed=False)
+
+    branch, worktree = _candidate_identity(root, target, created_at or timestamp())
+    candidate = Candidate(worktree, branch, target, changed=True)
+    _merge_upstream(root, source_head, candidate, ni_repository)
+    return candidate
+
+
+def finalize_candidate(candidate: Candidate) -> None:
+    """Pin the new baseline, refresh flake inputs, and commit only those locks.
+
+    Args:
+        candidate: Successfully merged candidate to finalize.
+    """
+    root = require_repo(candidate.root)
+    if _succeeds(root, "rev-parse", "--verify", "MERGE_HEAD"):
+        raise LifecycleError("merge 尚未完成；先解决冲突并执行 merge --continue")
+    (root / UPSTREAM_FILE).write_text(candidate.upstream_rev + "\n", encoding="utf-8")
+    try:
+        run(["nix", "flake", "lock"], cwd=root, capture=False)
+        run(
+            [
+                "nix",
+                "develop",
+                git_flake(root),
+                "--no-update-lock-file",
+                "--command",
+                "python3",
+                "nix/scripts/update-cargo-git-hashes.py",
+            ],
+            cwd=root,
+            capture=False,
+        )
+        run(
+            ["nix", "fmt", "--", "nix/cargo-git-hashes.nix"],
+            cwd=root,
+            capture=False,
+        )
+        run(
+            [
+                "nix",
+                "build",
+                ".#codex-cargo-deps",
+                "--no-link",
+                "--no-write-lock-file",
+            ],
+            cwd=root,
+            capture=False,
+        )
+    except LifecycleError as error:
+        raise LifecycleError(
+            f"dependency lock 更新或验真失败；candidate 保留于 {root}: {error}"
+        ) from error
+    git(root, "add", str(UPSTREAM_FILE), "flake.lock", "nix/cargo-git-hashes.nix")
+    if _succeeds(root, "diff", "--cached", "--quiet"):
+        raise LifecycleError("upstream 变化未产生 baseline/lock staged diff")
+    git(
+        root,
+        "commit",
+        "-m",
+        f"build(co): advance upstream to {candidate.upstream_rev[:10]}",
+    )
+
+
+def validate_candidate(
+    candidate: Candidate, ni_repository: Path = Path("/repo/ni")
+) -> None:
+    """Run the public test and build recipes for a finalized candidate.
+
+    Args:
+        candidate: Candidate whose tracked baseline update is committed.
+    """
+    justfile = candidate.root / "justfile"
+    run(
+        ["just", "--justfile", str(justfile), "co-test"],
+        cwd=candidate.root,
+        capture=False,
+    )
+    run(
+        ["just", "--justfile", str(justfile), "co-build"],
+        cwd=candidate.root,
+        capture=False,
+    )
+    run(
+        [
+            "just",
+            "--justfile",
+            str(justfile),
+            "co-test-host",
+            "--ni-repo",
+            str(ni_repository),
+        ],
+        cwd=candidate.root,
+        capture=False,
+    )
+
+
+def upgrade(
+    repository: Path,
+    revision: str = "upstream/main",
+    ni_repository: Path = Path("/repo/ni"),
+) -> Candidate:
+    """Create, finalize, test, and build a candidate without publishing it.
+
+    Args:
+        repository: Current clean candidate checkout.
+        revision: Requested upstream ref; defaults to fetched upstream main.
+
+    Returns:
+        The unchanged or newly validated candidate identity.
+    """
+    candidate = create_upgrade_candidate(
+        repository, revision, ni_repository=ni_repository
+    )
+    if not candidate.changed:
+        return candidate
+    finalize_candidate(candidate)
+    validate_candidate(candidate, ni_repository)
+    return candidate

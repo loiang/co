@@ -213,6 +213,7 @@ mod activity_groups;
 mod app_server_event_targets;
 mod app_server_events;
 pub(crate) mod app_server_requests;
+mod archive_except;
 mod backend_banner_fallback;
 mod background_requests;
 mod composer_hints;
