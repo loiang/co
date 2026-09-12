@@ -80,6 +80,124 @@ def test_publish_failure_keeps_exact_refs_for_idempotent_retry(tmp_path: Path) -
     ] == ("released")
 
 
+def test_two_source_commits_publish_and_archive_completed_retry_record(
+    tmp_path: Path,
+) -> None:
+    root, remote, first_rev = _repository(tmp_path)
+    first_asset = root / ".states/co/build/first"
+    first_asset.parent.mkdir(parents=True)
+    first_asset.write_text("first", encoding="utf-8")
+
+    with (
+        patch(
+            "publication.require_release_records",
+            side_effect=[(first_asset,), (root / ".states/co/build/second",)],
+        ),
+        patch("publication._require_origin"),
+        patch("publication.timestamp", return_value="20260912T140010Z"),
+        patch("publication.ensure_release"),
+    ):
+        first_tag = publish(root)
+        (root / "tracked").write_text("second\n", encoding="utf-8")
+        _git(root, "commit", "-am", "second")
+        second_rev = _git(root, "rev-parse", "HEAD")
+        second_asset = root / ".states/co/build/second"
+        second_asset.write_text("second", encoding="utf-8")
+        second_tag = publish(root)
+
+    completed = root / f".states/co/publish/completed/{first_tag}.json"
+    assert json.loads(completed.read_text())["sourceRev"] == first_rev
+    assert second_tag.endswith(second_rev[:10])
+    assert _git(remote, "rev-parse", "refs/heads/main") == second_rev
+    assert _git(remote, "rev-parse", f"refs/tags/{first_tag}^{{}}") == first_rev
+    assert _git(remote, "rev-parse", f"refs/tags/{second_tag}^{{}}") == second_rev
+
+
+def test_unfinished_prior_source_record_blocks_new_publish(tmp_path: Path) -> None:
+    root, _, first_rev = _repository(tmp_path)
+    pending = root / ".states/co/publish/pending.json"
+    pending.parent.mkdir(parents=True)
+    pending.write_text(
+        json.dumps(
+            {
+                "tag": f"co-20260912T140020Z-{first_rev[:10]}",
+                "sourceRev": first_rev,
+                "assets": [".states/co/build/first"],
+                "phase": "refs-pushed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "tracked").write_text("second\n", encoding="utf-8")
+    _git(root, "commit", "-am", "second")
+    asset = root / ".states/co/build/second"
+    asset.parent.mkdir(parents=True, exist_ok=True)
+    asset.write_text("second", encoding="utf-8")
+
+    with (
+        patch("publication.require_release_records", return_value=(asset,)),
+        patch("publication._require_origin"),
+        pytest.raises(LifecycleError, match="其他 source commit"),
+    ):
+        publish(root)
+
+    assert json.loads(pending.read_text())["phase"] == "refs-pushed"
+
+
+def test_dry_run_does_not_archive_completed_prior_source(tmp_path: Path) -> None:
+    root, _, first_rev = _repository(tmp_path)
+    pending = root / ".states/co/publish/pending.json"
+    pending.parent.mkdir(parents=True)
+    tag = f"co-20260912T140025Z-{first_rev[:10]}"
+    pending.write_text(
+        json.dumps(
+            {
+                "tag": tag,
+                "sourceRev": first_rev,
+                "assets": [".states/co/build/first"],
+                "phase": "released",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "tracked").write_text("second\n", encoding="utf-8")
+    _git(root, "commit", "-am", "second")
+    asset = root / ".states/co/build/second"
+    asset.parent.mkdir(parents=True, exist_ok=True)
+    asset.write_text("second", encoding="utf-8")
+
+    with (
+        patch("publication.require_release_records", return_value=(asset,)),
+        patch("publication._require_origin"),
+        patch("publication.ensure_release"),
+    ):
+        publish(root, dry_run=True)
+
+    assert pending.is_file()
+    assert not (pending.parent / f"completed/{tag}.json").exists()
+
+
+def test_released_same_source_retry_keeps_tag(tmp_path: Path) -> None:
+    root, _, source_rev = _repository(tmp_path)
+    asset = root / ".states/co/build/asset"
+    asset.parent.mkdir(parents=True)
+    asset.write_text("asset", encoding="utf-8")
+
+    with (
+        patch("publication.require_release_records", return_value=(asset,)),
+        patch("publication._require_origin"),
+        patch("publication.timestamp", return_value="20260912T140030Z"),
+        patch("publication.ensure_release"),
+    ):
+        first_tag = publish(root)
+        assert publish(root) == first_tag
+
+    pending = json.loads((root / ".states/co/publish/pending.json").read_text())
+    assert pending["sourceRev"] == source_rev
+    assert pending["tag"] == first_tag
+    assert pending["phase"] == "released"
+
+
 def test_existing_local_tag_cannot_be_retargeted(tmp_path: Path) -> None:
     root, _, source_rev = _repository(tmp_path)
     tag = f"co-20260912T140002Z-{source_rev[:10]}"
