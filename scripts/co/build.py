@@ -91,7 +91,9 @@ def _write_archive(binary: Path, archive: Path) -> None:
                     bundle.addfile(info, source)
 
 
-def _nix_build(root: Path) -> tuple[str, Path]:
+def _nix_build(root: Path, cores: int = 0) -> tuple[str, Path]:
+    if cores < 0:
+        raise LifecycleError("Nix cores 必须是非负整数")
     result = run(
         [
             "nix",
@@ -103,7 +105,7 @@ def _nix_build(root: Path) -> tuple[str, Path]:
             "--max-jobs",
             "1",
             "--cores",
-            "0",
+            str(cores),
         ],
         cwd=root,
     )
@@ -157,10 +159,18 @@ def _emit_assets(
     return latest
 
 
-def build(repository: Path) -> Path:
-    """Build only the static CLI and emit checksummed publication assets."""
+def build(repository: Path, cores: int = 0) -> Path:
+    """Build only the static CLI with a per-invocation Nix core limit.
+
+    Args:
+        repository: Checkout whose source and lock identities bind the assets.
+        cores: Cores exposed to each Nix build job; zero means all available.
+
+    Returns:
+        Path to the build evidence record and checksummed publication assets.
+    """
     root = require_repo(repository)
     require_no_untracked(root)
     identity = source_identity(root)
-    store_path, binary = _nix_build(root)
+    store_path, binary = _nix_build(root, cores)
     return _emit_assets(root, identity, store_path, binary)

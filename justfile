@@ -216,8 +216,9 @@ co-test:
     {{ python }} {{ justfile_directory() }}/scripts/co/cli.py test --repo {{ justfile_directory() }}
 
 [no-cd]
-co-build:
-    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py build --repo {{ justfile_directory() }}
+[positional-arguments]
+co-build *args:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py build --repo {{ justfile_directory() }} "$@"
 
 [no-cd]
 [positional-arguments]

@@ -15,6 +15,7 @@ from git_lifecycle import (  # noqa: E402
     CandidateConflict,
     create_upgrade_candidate,
     finalize_candidate,
+    validate_candidate,
 )
 
 
@@ -101,7 +102,7 @@ def test_conflict_preserves_candidate_worktree_for_continuation(tmp_path: Path) 
     _commit(upstream, "upstream conflict")
 
     with pytest.raises(CandidateConflict, match="merge --continue") as captured:
-        create_upgrade_candidate(checkout, created_at="20260912T130002Z")
+        create_upgrade_candidate(checkout, created_at="20260912T130002Z", build_cores=4)
 
     message = str(captured.value)
     candidate_root = checkout / ".states" / "worktrees" / "20260912T130002Z-"
@@ -111,6 +112,7 @@ def test_conflict_preserves_candidate_worktree_for_continuation(tmp_path: Path) 
     assert str(matching[0]) in message
     assert "just --justfile" in message
     assert "co-upgrade-finalize" in message
+    assert "--cores 4" in message
 
 
 def test_finalize_locks_without_unscoped_flake_update(tmp_path: Path) -> None:
@@ -143,3 +145,21 @@ def test_finalize_locks_without_unscoped_flake_update(tmp_path: Path) -> None:
         "--no-link",
         "--no-write-lock-file",
     ] in commands
+
+
+def test_candidate_validation_passes_build_core_limit(tmp_path: Path) -> None:
+    """Forward a one-run resource limit only to the candidate CLI build."""
+    candidate = Candidate(tmp_path, "upgrade/test", "a" * 40, True)
+    commands: list[list[str]] = []
+
+    def capture(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with patch("git_lifecycle.run", side_effect=capture):
+        validate_candidate(candidate, build_cores=4)
+
+    build_command = next(command for command in commands if "co-build" in command)
+    assert build_command[-2:] == ["--cores", "4"]

@@ -18,6 +18,17 @@ from publication import publish
 from testing import run_tests
 
 
+def _non_negative_int(value: str) -> int:
+    """Parse resource limits before any lifecycle mutation can begin."""
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("必须是整数") from error
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("必须是非负整数")
+    return parsed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="co-lifecycle")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -25,12 +36,14 @@ def _parser() -> argparse.ArgumentParser:
     upgrade_parser = subcommands.add_parser("upgrade")
     upgrade_parser.add_argument("--repo", type=Path, required=True)
     upgrade_parser.add_argument("--ni-repo", type=Path, default=Path("/repo/ni"))
+    upgrade_parser.add_argument("--cores", type=_non_negative_int, default=0)
     upgrade_parser.add_argument("revision", nargs="?", default="upstream/main")
 
     finalize = subcommands.add_parser("upgrade-finalize")
     finalize.add_argument("--repo", type=Path, required=True)
     finalize.add_argument("--upstream-rev", required=True)
     finalize.add_argument("--ni-repo", type=Path, default=Path("/repo/ni"))
+    finalize.add_argument("--cores", type=_non_negative_int, default=0)
 
     promote_parser = subcommands.add_parser("promote")
     promote_parser.add_argument("--repo", type=Path, required=True)
@@ -41,6 +54,7 @@ def _parser() -> argparse.ArgumentParser:
 
     build_parser = subcommands.add_parser("build")
     build_parser.add_argument("--repo", type=Path, required=True)
+    build_parser.add_argument("--cores", type=_non_negative_int, default=0)
 
     host_parser = subcommands.add_parser("test-host")
     host_parser.add_argument("--repo", type=Path, required=True)
@@ -61,7 +75,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _execute(args: argparse.Namespace) -> str:
     if args.command == "upgrade":
-        candidate = upgrade(args.repo, args.revision, args.ni_repo)
+        candidate = upgrade(args.repo, args.revision, args.ni_repo, args.cores)
         status = "created" if candidate.changed else "noop"
         return f"candidate {status}: {candidate.branch} ({candidate.root})"
     if args.command == "upgrade-finalize":
@@ -70,7 +84,7 @@ def _execute(args: argparse.Namespace) -> str:
             args.repo.resolve(), branch, args.upstream_rev, changed=True
         )
         finalize_candidate(candidate)
-        validate_candidate(candidate, args.ni_repo)
+        validate_candidate(candidate, args.ni_repo, args.cores)
         return f"candidate finalized: {branch} ({candidate.root})"
     if args.command == "promote":
         revision = promote(args.repo, args.candidate)
@@ -78,7 +92,7 @@ def _execute(args: argparse.Namespace) -> str:
     if args.command == "test":
         return f"test record: {run_tests(args.repo)}"
     if args.command == "build":
-        return f"build record: {build(args.repo)}"
+        return f"build record: {build(args.repo, args.cores)}"
     if args.command == "test-host":
         return (
             f"host integration record: {test_host_integration(args.repo, args.ni_repo)}"

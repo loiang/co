@@ -96,6 +96,7 @@ def _merge_upstream(
     source_head: str,
     candidate: Candidate,
     ni_repository: Path,
+    build_cores: int,
 ) -> None:
     candidate.root.parent.mkdir(parents=True, exist_ok=True)
     git(
@@ -130,7 +131,8 @@ def _merge_upstream(
         f"GIT_EDITOR=true git -C {quoted_worktree} merge --continue\n"
         f"just --justfile {quoted_worktree}/justfile co-upgrade-finalize "
         f"--upstream-rev {quoted_target} "
-        f"--ni-repo {shlex.quote(str(ni_repository.resolve()))}"
+        f"--ni-repo {shlex.quote(str(ni_repository.resolve()))} "
+        f"--cores {build_cores}"
     )
     raise CandidateConflict(
         f"upstream merge 冲突；worktree 已保留: {candidate.root}\n"
@@ -143,6 +145,7 @@ def create_upgrade_candidate(
     revision: str = "upstream/main",
     created_at: str | None = None,
     ni_repository: Path = Path("/repo/ni"),
+    build_cores: int = 0,
 ) -> Candidate:
     """Merge a fixed upstream commit into a new isolated worktree.
 
@@ -150,6 +153,8 @@ def create_upgrade_candidate(
         repository: Current published candidate checkout.
         revision: Upstream ref or commit to resolve after fetching upstream.
         created_at: Fixed UTC name component used by deterministic tests.
+        ni_repository: Consumer checkout that owns the official host package.
+        build_cores: Cores exposed to the candidate Nix build; zero means all.
 
     Returns:
         Candidate identity; ``changed`` is false for the same upstream SHA.
@@ -158,6 +163,8 @@ def create_upgrade_candidate(
         CandidateConflict: Git leaves a conflicted merge for manual recovery.
         LifecycleError: Repository, ancestry, cleanliness, or identity fails.
     """
+    if build_cores < 0:
+        raise LifecycleError("Nix cores 必须是非负整数")
     root = require_repo(repository)
     require_clean(root)
     source_branch = git(root, "branch", "--show-current")
@@ -177,7 +184,7 @@ def create_upgrade_candidate(
 
     branch, worktree = _candidate_identity(root, target, created_at or timestamp())
     candidate = Candidate(worktree, branch, target, changed=True)
-    _merge_upstream(root, source_head, candidate, ni_repository)
+    _merge_upstream(root, source_head, candidate, ni_repository, build_cores)
     return candidate
 
 
@@ -238,13 +245,19 @@ def finalize_candidate(candidate: Candidate) -> None:
 
 
 def validate_candidate(
-    candidate: Candidate, ni_repository: Path = Path("/repo/ni")
+    candidate: Candidate,
+    ni_repository: Path = Path("/repo/ni"),
+    build_cores: int = 0,
 ) -> None:
     """Run the public test and build recipes for a finalized candidate.
 
     Args:
         candidate: Candidate whose tracked baseline update is committed.
+        ni_repository: Consumer checkout that owns the official host package.
+        build_cores: Cores exposed to the candidate Nix build; zero means all.
     """
+    if build_cores < 0:
+        raise LifecycleError("Nix cores 必须是非负整数")
     justfile = candidate.root / "justfile"
     run(
         ["just", "--justfile", str(justfile), "co-test"],
@@ -252,7 +265,14 @@ def validate_candidate(
         capture=False,
     )
     run(
-        ["just", "--justfile", str(justfile), "co-build"],
+        [
+            "just",
+            "--justfile",
+            str(justfile),
+            "co-build",
+            "--cores",
+            str(build_cores),
+        ],
         cwd=candidate.root,
         capture=False,
     )
@@ -274,21 +294,27 @@ def upgrade(
     repository: Path,
     revision: str = "upstream/main",
     ni_repository: Path = Path("/repo/ni"),
+    build_cores: int = 0,
 ) -> Candidate:
     """Create, finalize, test, and build a candidate without publishing it.
 
     Args:
         repository: Current clean candidate checkout.
         revision: Requested upstream ref; defaults to fetched upstream main.
+        ni_repository: Consumer checkout that owns the official host package.
+        build_cores: Cores exposed to the candidate Nix build; zero means all.
 
     Returns:
         The unchanged or newly validated candidate identity.
     """
     candidate = create_upgrade_candidate(
-        repository, revision, ni_repository=ni_repository
+        repository,
+        revision,
+        ni_repository=ni_repository,
+        build_cores=build_cores,
     )
     if not candidate.changed:
         return candidate
     finalize_candidate(candidate)
-    validate_candidate(candidate, ni_repository)
+    validate_candidate(candidate, ni_repository, build_cores)
     return candidate
