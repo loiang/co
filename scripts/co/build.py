@@ -103,7 +103,7 @@ def _nix_build(root: Path) -> tuple[str, Path]:
             "--max-jobs",
             "1",
             "--cores",
-            "2",
+            "0",
         ],
         cwd=root,
     )
