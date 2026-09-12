@@ -23,8 +23,14 @@ from host_integration import (
     official_host_lock,
     test_candidate_binaries,
 )
+from release_asset import (
+    TAG_RE,
+    ReleaseBundle,
+    fetch_release_bundle,
+    resolve_release_tag,
+    verified_cli,
+)
 
-TAG_RE = re.compile(r"^co-[A-Za-z0-9_.-]+$")
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 CODEX_SOURCE_RE = re.compile(
     r"codex\s*=\s*\{(?:(?!\};).)*?url\s*=\s*\"([^\"]+)\"", re.DOTALL
@@ -120,7 +126,13 @@ def _verify_source_url(ni_root: Path, reference: str, source_rev: str) -> None:
         raise LifecycleError("ni flake.nix Codex source 未精确切换到目标 reference")
 
 
-def _update_consumer(ni_root: Path, host: str, reference: str, source_rev: str) -> None:
+def _update_consumer(
+    ni_root: Path,
+    host: str,
+    reference: str,
+    source_rev: str,
+    release_tag: str,
+) -> None:
     host_lock_before = _locked_input(ni_root / "flake.lock", "codeModeHostRelease")
     consumer_lock = ni_root / "hosts" / host / "flake.lock"
     consumer_host_before = _locked_input(consumer_lock, "root", "codeModeHostRelease")
@@ -135,6 +147,8 @@ def _update_consumer(ni_root: Path, host: str, reference: str, source_rev: str) 
             reference,
             "--expected-rev",
             source_rev,
+            "--release-tag",
+            release_tag,
         ),
         cwd=ni_root,
         capture=False,
@@ -155,47 +169,24 @@ def _record_install(root: Path, values: dict[str, Any]) -> None:
     write_json(root / ".states/co/install/latest.json", {"schemaVersion": 1, **values})
 
 
-def _candidate_cli(root: Path, reference: str, source_rev: str) -> tuple[str, Path]:
-    source = (
-        f"git+https://github.com/loiang/co.git?ref={reference}&rev={source_rev}#codex"
-    )
-    result = run(
-        [
-            "nix",
-            "build",
-            source,
-            "--no-link",
-            "--print-out-paths",
-            "--no-write-lock-file",
-        ],
-        cwd=root,
-    )
-    outputs = tuple(line for line in (result.stdout or "").splitlines() if line)
-    if len(outputs) != 1:
-        raise LifecycleError("待安装 Codex source build 未返回单一 store path")
-    binary = Path(outputs[0]) / "bin/codex"
-    verify_static_elf(binary)
-    return outputs[0], binary
-
-
 def _validate_candidate_source(
-    root: Path, ni_root: Path, reference: str, source_rev: str
+    root: Path, ni_root: Path, bundle: ReleaseBundle
 ) -> Path:
-    codex_store, codex_binary = _candidate_cli(root, reference, source_rev)
     host_store = build_official_host(root, ni_root)
     host_binary = Path(host_store) / "bin/codex-code-mode-host"
-    command = test_candidate_binaries(root, codex_binary, host_binary)
+    with verified_cli(bundle) as codex_binary:
+        verify_static_elf(codex_binary)
+        command = test_candidate_binaries(root, codex_binary, host_binary)
     record = root / ".states/co/install/candidate-validation.json"
     write_json(
         record,
         {
             "schemaVersion": 1,
             "completedAt": timestamp(),
-            "reference": reference,
-            "sourceRev": source_rev,
+            "sourceRev": bundle.source_rev,
             "harnessRev": head(root),
-            "codexStorePath": codex_store,
-            "codexSha256": sha256(codex_binary),
+            "release": bundle.evidence(),
+            "cliArchiveStorePath": str(bundle.cli.path),
             "officialHostStorePath": host_store,
             "officialHostSha256": sha256(host_binary),
             "officialHostLock": official_host_lock(ni_root),
@@ -213,10 +204,10 @@ def install(
     tag: str | None = None,
     dry_run: bool = False,
 ) -> str:
-    """Update the real ni lock, verify it, build, and explicitly switch the host.
+    """Prevalidate one released CLI, then install it through ni's CAS transaction.
 
     Args:
-        repository: Clean released co checkout at ``tag``.
+        repository: Clean co checkout providing the release validation harness.
         ni_repository: Clean ni checkout that owns the target host locks.
         host: Existing ni host name.
         tag: Optional immutable co-* pin; omitted means tracking published main.
@@ -227,14 +218,14 @@ def install(
     """
     root, ni_root, source_rev = _preflight(repository, ni_repository, host, tag)
     reference = tag or "main"
+    release_tag = resolve_release_tag(root, reference, source_rev)
+    bundle = fetch_release_bundle(root, release_tag, source_rev)
     switch_command = _ni_command(ni_root, "rebuild", host, "switch", "--no-update")
-    integration_record = _validate_candidate_source(
-        root, ni_root, reference, source_rev
-    )
+    integration_record = _validate_candidate_source(root, ni_root, bundle)
     if dry_run:
         return " ".join(switch_command)
     ni_before = head(ni_root)
-    _update_consumer(ni_root, host, reference, source_rev)
+    _update_consumer(ni_root, host, reference, source_rev, release_tag)
     run(_ni_command(ni_root, "build", host), cwd=ni_root, capture=False)
     run(switch_command, cwd=ni_root, capture=False)
     switch = " ".join(switch_command)
@@ -244,6 +235,7 @@ def install(
             "completedAt": timestamp(),
             "sourceRev": source_rev,
             "reference": reference,
+            "releaseTag": release_tag,
             "host": host,
             "niRepo": str(ni_root),
             "niRevBefore": ni_before,
