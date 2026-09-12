@@ -14,7 +14,6 @@ sys.path.insert(0, str(ROOT / "scripts" / "co"))
 from common import LifecycleError  # noqa: E402
 from host_integration import build_official_host  # noqa: E402
 from install import (  # noqa: E402
-    _candidate_cli,
     _update_consumer,
     _verify_codex_lock,
     _verify_source_url,
@@ -116,11 +115,21 @@ def test_explicit_install_updates_builds_then_switches(tmp_path: Path) -> None:
         events.append("gate")
         return integration
 
+    def resolved(*_args: object) -> str:
+        events.append("resolve")
+        return "co-20260912T154829Z-aaaaaaaaaa"
+
+    def fetched(*_args: object) -> object:
+        events.append("fetch")
+        return object()
+
     def updated(*_args: object) -> None:
         events.append("update")
 
     with (
         patch("install._preflight", return_value=(root, ni_root, "a" * 40)),
+        patch("install.resolve_release_tag", side_effect=resolved),
+        patch("install.fetch_release_bundle", side_effect=fetched),
         patch("install.head", side_effect=["b" * 40, "c" * 40]),
         patch("install.run", side_effect=capture),
         patch("install._validate_candidate_source", side_effect=validated),
@@ -129,7 +138,7 @@ def test_explicit_install_updates_builds_then_switches(tmp_path: Path) -> None:
     ):
         switch = install(root, ni_root, "dev", "co-release")
 
-    assert events == ["gate", "update", "build", "rebuild"]
+    assert events == ["resolve", "fetch", "gate", "update", "build", "rebuild"]
     assert "rebuild dev switch --no-update" in switch
 
 
@@ -141,6 +150,11 @@ def test_install_dry_run_stops_before_consumer_mutation(tmp_path: Path) -> None:
 
     with (
         patch("install._preflight", return_value=(root, ni_root, "a" * 40)),
+        patch(
+            "install.resolve_release_tag",
+            return_value="co-20260912T154829Z-aaaaaaaaaa",
+        ),
+        patch("install.fetch_release_bundle", return_value=object()),
         patch(
             "install._validate_candidate_source", return_value=root / "record"
         ) as gate,
@@ -162,6 +176,11 @@ def test_candidate_failure_occurs_before_ni_update(tmp_path: Path) -> None:
     with (
         patch("install._preflight", return_value=(root, ni_root, "a" * 40)),
         patch(
+            "install.resolve_release_tag",
+            return_value="co-20260912T154829Z-aaaaaaaaaa",
+        ),
+        patch("install.fetch_release_bundle", return_value=object()),
+        patch(
             "install._validate_candidate_source",
             side_effect=LifecycleError("incompatible"),
         ),
@@ -173,30 +192,28 @@ def test_candidate_failure_occurs_before_ni_update(tmp_path: Path) -> None:
     update.assert_not_called()
 
 
-def test_tag_candidate_build_is_pinned_to_exact_sha(tmp_path: Path) -> None:
-    store = tmp_path / "store"
-    binary = store / "bin/codex"
-    binary.parent.mkdir(parents=True)
-    binary.write_bytes(b"candidate")
-    commands: list[list[str]] = []
-
-    def capture(
-        command: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        commands.append(command)
-        return subprocess.CompletedProcess(command, 0, str(store) + "\n", "")
+def test_missing_main_release_fails_before_consumer_mutation(tmp_path: Path) -> None:
+    root = tmp_path / "co"
+    ni_root = tmp_path / "ni"
+    root.mkdir()
+    ni_root.mkdir()
 
     with (
-        patch("install.run", side_effect=capture),
-        patch("install.verify_static_elf"),
+        patch("install._preflight", return_value=(root, ni_root, "a" * 40)),
+        patch(
+            "install.resolve_release_tag",
+            side_effect=LifecycleError("main has no release"),
+        ),
+        patch("install.fetch_release_bundle") as fetch,
+        patch("install._validate_candidate_source") as gate,
+        patch("install._update_consumer") as update,
+        pytest.raises(LifecycleError, match="no release"),
     ):
-        _, selected = _candidate_cli(tmp_path, "co-release", "a" * 40)
+        install(root, ni_root, "dev")
 
-    assert selected == binary
-    assert (
-        "git+https://github.com/loiang/co.git?ref=co-release&rev=" + "a" * 40 + "#codex"
-    ) in commands[0]
-    assert "--no-write-lock-file" in commands[0]
+    fetch.assert_not_called()
+    gate.assert_not_called()
+    update.assert_not_called()
 
 
 def test_official_host_build_never_rewrites_consumer_lock(tmp_path: Path) -> None:
@@ -230,7 +247,18 @@ def test_update_passes_expected_revision_to_ni(tmp_path: Path) -> None:
         patch("install._verify_source_url"),
         patch("install._verify_codex_lock"),
     ):
-        _update_consumer(tmp_path, "dev", "main", "a" * 40)
+        _update_consumer(
+            tmp_path,
+            "dev",
+            "main",
+            "a" * 40,
+            "co-20260912T154829Z-aaaaaaaaaa",
+        )
 
     command = commands[0]
-    assert command[-2:] == ["--expected-rev", "a" * 40]
+    assert command[-4:] == [
+        "--expected-rev",
+        "a" * 40,
+        "--release-tag",
+        "co-20260912T154829Z-aaaaaaaaaa",
+    ]
