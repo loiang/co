@@ -1,5 +1,5 @@
 {
-  description = "Development Nix flake for OpenAI Codex CLI";
+  description = "Development and source-build Nix flake for OpenAI Codex CLI";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -9,7 +9,13 @@
     };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, ... }:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+      ...
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -17,71 +23,140 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems f;
-
-      # Read the version from the workspace Cargo.toml (the single source of
-      # truth used by the release workflow).
+      forAllSystems = nixpkgs.lib.genAttrs systems;
       cargoToml = builtins.fromTOML (builtins.readFile ./codex-rs/Cargo.toml);
-      cargoVersion = cargoToml.workspace.package.version;
-
-      # When building from a release commit the Cargo.toml already carries the
-      # real version (e.g. "0.101.0").  On the main branch it is the placeholder
-      # "0.0.0", so we fall back to a dev version derived from the flake source.
-      version =
-        if cargoVersion != "0.0.0"
-        then cargoVersion
-        else "0.0.0-dev+${self.shortRev or "dirty"}";
+      version = cargoToml.workspace.package.version;
+      rustToolchainToml = builtins.fromTOML (builtins.readFile ./codex-rs/rust-toolchain.toml);
+      rustToolchainVersion = rustToolchainToml.toolchain.channel;
+      codexSource = nixpkgs.lib.cleanSourceWith {
+        src = self.outPath + "/codex-rs";
+        filter =
+          path: type:
+          let
+            name = builtins.baseNameOf path;
+          in
+          nixpkgs.lib.cleanSourceFilter path type
+          && !builtins.elem name [
+            "target"
+          ];
+        name = "co-codex-rs-source";
+      };
+      helperSource = nixpkgs.lib.cleanSourceWith {
+        src = self.outPath + "/bin";
+        filter =
+          path: type:
+          let
+            name = builtins.baseNameOf path;
+          in
+          nixpkgs.lib.cleanSourceFilter path type
+          && name != "__pycache__"
+          && !nixpkgs.lib.hasSuffix ".pyc" name;
+        name = "co-runtime-helpers";
+      };
+      pkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+      rustMinimalFor = pkgs: pkgs.rust-bin.stable.${rustToolchainVersion}.minimal;
+      rustPlatformFor =
+        pkgs:
+        pkgs.makeRustPlatform {
+          cargo = rustMinimalFor pkgs;
+          rustc = rustMinimalFor pkgs;
+        };
     in
     {
-      packages = forAllSystems (system:
+      packages = forAllSystems (
+        system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ rust-overlay.overlays.default ];
-          };
-          codex-rs = pkgs.callPackage ./codex-rs {
+          pkgs = pkgsFor system;
+          upstreamCodexRs = pkgs.callPackage ./codex-rs {
             inherit version;
-            rustPlatform = pkgs.makeRustPlatform {
-              cargo = pkgs.rust-bin.stable.latest.minimal;
-              rustc = pkgs.rust-bin.stable.latest.minimal;
-            };
+            rustPlatform = rustPlatformFor pkgs;
           };
+          customPackages = nixpkgs.lib.optionalAttrs (system == "x86_64-linux") (
+            import ./nix/packages.nix {
+              inherit
+                pkgs
+                codexSource
+                helperSource
+                rustToolchainVersion
+                version
+                ;
+            }
+          );
         in
         {
-          codex-rs = codex-rs;
-          default = codex-rs;
+          codex-rs = upstreamCodexRs;
+          default = upstreamCodexRs;
         }
+        // customPackages
       );
 
-      devShells = forAllSystems (system:
+      checks = forAllSystems (
+        system:
+        nixpkgs.lib.optionalAttrs (system == "x86_64-linux") (
+          let
+            pkgs = pkgsFor system;
+            package = self.packages.${system}.codex;
+          in
+          {
+            codex-release-layout = pkgs.runCommand "codex-release-layout" { } ''
+              test -x ${package}/bin/codex
+              test -x ${package}/bin/codex-archive-subagents
+              test ! -e ${package}/bin/codex-code-mode-host
+              touch "$out"
+            '';
+          }
+        )
+      );
+
+      devShells = forAllSystems (
+        system:
         let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ rust-overlay.overlays.default ];
+          pkgs = pkgsFor system;
+          rust = pkgs.rust-bin.stable.${rustToolchainVersion}.default.override {
+            extensions = [
+              "rust-analyzer"
+              "rust-src"
+            ];
           };
-          rust = pkgs.rust-bin.stable.latest.default.override {
-            extensions = [ "rust-src" "rust-analyzer" ];
-          };
+          python = pkgs.python3.withPackages (pythonPackages: [
+            pythonPackages.pytest
+            pythonPackages.websockets
+          ]);
         in
         {
           default = pkgs.mkShell {
-            buildInputs = [
+            name = "co-development-${system}";
+            packages = [
               rust
-              pkgs.pkg-config
-              pkgs.openssl
+              pkgs.cargo-nextest
               pkgs.cmake
+              pkgs.file
+              pkgs.just
               pkgs.llvmPackages.clang
               pkgs.llvmPackages.libclang.lib
+              pkgs.nix-prefetch-git
+              pkgs.openssl
+              pkgs.pkg-config
+              pkgs.ruff
+              python
             ];
             PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-            # Use clang for BoringSSL compilation (avoids GCC 15 warnings-as-errors)
             shellHook = ''
+              export CO_NIX_DEV_ACTIVE=1
+              export CARGO_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/co-cargo"
               export CC=clang
               export CXX=clang++
             '';
           };
         }
       );
+
+      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
     };
 }

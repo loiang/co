@@ -210,6 +210,7 @@ pub(crate) use agents_overview::AGENTS_OVERVIEW_VIEW_ID;
 mod app_server_event_targets;
 mod app_server_events;
 pub(crate) mod app_server_requests;
+mod archive_except;
 mod backend_banner_fallback;
 mod background_requests;
 mod config_persistence;

@@ -411,6 +411,10 @@ impl App {
             AppEvent::ArchiveCurrentThread => {
                 return self.archive_current_thread(tui, app_server).await;
             }
+            AppEvent::PrepareArchiveExcept => self.prepare_archive_except().await,
+            AppEvent::ConfirmArchiveExcept(plan) => {
+                self.confirm_archive_except(app_server, plan).await;
+            }
             AppEvent::DeleteCurrentThread => {
                 return self.delete_current_thread(tui, app_server).await;
             }

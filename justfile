@@ -195,6 +195,45 @@ argument-comment-lint *args:
 argument-comment-lint-from-source *args:
     {{ python }} {{ justfile_directory() }}/tools/argument-comment-lint/run.py {args}
 
+# Repository-only lifecycle commands require a visible checkout for provenance.
+[no-cd]
+[positional-arguments]
+co-upgrade *args:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py upgrade --repo {{ justfile_directory() }} "$@"
+
+[no-cd]
+[positional-arguments]
+co-upgrade-finalize *args:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py upgrade-finalize --repo {{ justfile_directory() }} "$@"
+
+[no-cd]
+[positional-arguments]
+co-promote *args:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py promote --repo {{ justfile_directory() }} "$@"
+
+[no-cd]
+co-test:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py test --repo {{ justfile_directory() }}
+
+[no-cd]
+co-build:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py build --repo {{ justfile_directory() }}
+
+[no-cd]
+[positional-arguments]
+co-test-host *args:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py test-host --repo {{ justfile_directory() }} "$@"
+
+[no-cd]
+[positional-arguments]
+co-publish *args:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py publish --repo {{ justfile_directory() }} "$@"
+
+[no-cd]
+[positional-arguments]
+co-install *args:
+    {{ python }} {{ justfile_directory() }}/scripts/co/cli.py install --repo {{ justfile_directory() }} "$@"
+
 # Tail logs from the state SQLite database
 [unix]
 log *args:

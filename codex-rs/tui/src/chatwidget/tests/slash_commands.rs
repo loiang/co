@@ -2957,6 +2957,26 @@ async fn slash_archive_is_disabled_while_task_running() {
 }
 
 #[tokio::test]
+async fn slash_archive_except_is_disabled_while_task_running() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.bottom_pane.set_task_running(/*running*/ true);
+
+    chat.dispatch_command(SlashCommand::ArchiveExcept);
+
+    let event = rx.try_recv().expect("expected disabled command error");
+    match event {
+        AppEvent::InsertHistoryCell(cell) => {
+            let rendered = lines_to_single_string(&cell.display_lines(/*width*/ 80));
+            assert!(
+                rendered.contains("'/archive-except' is disabled while a task is in progress.")
+            );
+        }
+        other => panic!("expected InsertHistoryCell error, got {other:?}"),
+    }
+    assert!(rx.try_recv().is_err(), "expected no follow-up events");
+}
+
+#[tokio::test]
 async fn slash_memory_drop_reports_stubbed_feature() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -3104,6 +3124,53 @@ async fn slash_archive_confirmation_requests_current_thread_archive() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(rx.try_recv(), Ok(AppEvent::ArchiveCurrentThread));
+}
+
+#[tokio::test]
+async fn slash_archive_except_requests_a_fresh_global_plan() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::ArchiveExcept);
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::PrepareArchiveExcept));
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[tokio::test]
+async fn archive_except_confirmation_is_cancel_safe_and_emits_the_confirmed_plan() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let keep = ThreadId::from_u128(100);
+    let first = ThreadId::from_u128(101);
+    let second = ThreadId::from_u128(102);
+    let plan = codex_state::ArchiveExceptPlan {
+        keep_thread_id: keep,
+        protected_thread_ids: vec![keep],
+        candidate_thread_ids: vec![first, second],
+        subtrees: vec![codex_state::ArchiveExceptSubtree {
+            root_thread_id: first,
+            thread_ids: vec![first, second],
+        }],
+    };
+
+    chat.show_archive_except_confirmation(plan.clone());
+    assert!(chat.bottom_pane.has_active_view());
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+    assert_chatwidget_snapshot!(
+        "slash_archive_except_confirmation_popup",
+        render_bottom_popup(&chat, /*width*/ 80)
+    );
+
+    chat.handle_key_event(KeyEvent::from(KeyCode::Esc));
+    assert!(!chat.bottom_pane.has_active_view());
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+
+    chat.show_archive_except_confirmation(plan.clone());
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::ConfirmArchiveExcept(actual)) if actual == plan
+    );
 }
 
 #[tokio::test]

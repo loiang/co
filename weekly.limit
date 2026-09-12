@@ -1,0 +1,110 @@
+4 Jun:
+│  5h limit:                    [████████████████████] 99% left (resets 01:13 on 4 Jun)   │
+│  Weekly limit:                [████████████████████] 100% left (resets 20:13 on 10 Jun) │
+│  GPT-5.3-Codex-Spark limit:                                                             │
+│  5h limit:                    [███████████████████░] 95% left (resets 00:28 on 4 Jun)   │
+│  Weekly limit:                [████████████████████] 98% left (resets 19:28 on 10 Jun)  │
+11 Jun
+│  5h limit:                    [████████████████████] 99% left     │
+│                               (resets 02:40 on 11 Jun)            │
+│  Weekly limit:                [████████████████████] 100% left    │
+│                               (resets 21:40 on 17 Jun)            │
+│  GPT-5.3-Codex-Spark limit:                                       │
+│  5h limit:                    [███████████████████░] 94% left     │
+│                               (resets 01:01 on 11 Jun)            │
+│  Weekly limit:                [████████████████████] 98% left     │
+│                               (resets 20:01 on 17 Jun)            │
+17 Jun 下一次在上海时间6 月 25 日 08:07，需要在24号晚上用完
+│  5h limit:                    [████████████████████] 100% left    │
+│                               (resets 00:07 on 18 Jun)            │
+│  Weekly limit:                [████████████████████] 100% left    │
+│                               (resets 19:07 on 24 Jun)            │
+│  GPT-5.3-Codex-Spark limit:                                       │
+│  5h limit:                    [████████████████████] 100% left    │
+│                               (resets 00:07 on 18 Jun)            │
+│  Weekly limit:                [████████████████████] 100% left    │
+│                               (resets 19:07 on 24 Jun)            │
+╰───────────────────────────────────────────────────────────────────╯
+│  5h limit:                    [█████████████████░░░] 86% left (resets 10:13)          │
+│  Weekly limit:                [████████████████░░░░] 79% left (resets 19:30 on 1 Jul) │
+│  GPT-5.3-Codex-Spark limit:                                                           │
+│  5h limit:                    [███████████████████░] 94% left (resets 12:42)          │
+│  Weekly limit:                [█████████████████░░░] 86% left (resets 08:06 on 4 Jul) │
+1 Jul
+│  5h limit:                    [████████████████████] 100% left (resets 00:03 on 1 Jul) │
+│  Weekly limit:                [█████████████████░░░] 83% left (resets 20:49 on 6 Jul)  │
+│  GPT-5.3-Codex-Spark limit:                                                            │
+│  5h limit:                    [████████████████████] 100% left (resets 00:03 on 1 Jul) │
+│  Weekly limit:                [██████████████████░░] 92% left (resets 21:39 on 6 Jul)  │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+21:12 on 6 Jul
+│  Context window:              60% left (55.8K used / 122K)                              │
+│  5h limit:                    [████████████████████] 100% left (resets 02:12 on 7 Jul)  │
+│  Weekly limit:                [████████████████████] 100% left (resets 21:12 on 13 Jul) │
+│  GPT-5.3-Codex-Spark limit:                                                             │
+│  5h limit:                    [██████████████████░░] 91% left (resets 00:22 on 7 Jul)   │
+│  Weekly limit:                [█████░░░░░░░░░░░░░░░] 23% left (resets 21:39)            │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+19:26 on 16 Jul，距离上次只有4天就重置了一次
+│  Context window:              45% left (147K used / 258K)                              │
+│  5h limit:                    [██████████████░░░░░░] 68% left (resets 06:08)           │
+│  Weekly limit:                [██████████████████░░] 88% left (resets 19:26 on 16 Jul) │
+│  GPT-5.3-Codex-Spark limit:                                                            │
+│  5h limit:                    [██████████████████░░] 92% left (resets 02:53)           │
+│  Weekly limit:                [███████████████████░] 97% left (resets 21:53 on 16 Jul) │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+01:13 on 18 Jul 隔两天重置了
+│  5h limit:                    [███░░░░░░░░░░░░░░░░░] 16% left (resets 06:13)           │
+│  Weekly limit:                [█████████████████░░░] 87% left (resets 01:13 on 18 Jul) │
+│  GPT-5.3-Codex-Spark limit:                                                            │
+│  5h limit:                    [███████████████████░] 96% left (resets 08:41)           │
+│  Weekly limit:                [████████████████████] 99% left (resets 03:41 on 18 Jul) │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+01:13 on 22 Jul 隔4天重置了
+│  Weekly limit:                       [███████████████████░] 94% left (resets 06:06 on 22 Jul)  │
+│  GPT-5.3-Codex-Spark Weekly limit:   [████████████████████] 100% left (resets 08:27 on 22 Jul) │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+重置了 Jul 22，但是之前还有一次重置
+│  Weekly limit:                       [█░░░░░░░░░░░░░░░░░░░] 6% left (resets 05:46 on 29 Jul)  │
+│  GPT-5.3-Codex-Spark Weekly limit:   [███████████████████░] 93% left (resets 06:48 on 29 Jul) │
+4天就会重置，最近的重置日期是25号
+│  Weekly limit:                       [████████████████████] 100% left (resets 14:33 on 1 Aug) │
+│  GPT-5.3-Codex-Spark Weekly limit:   [████████████████████] 100% left (resets 14:35 on 1 Aug) │
+中间重置了一次。变成了8-4号重置，但是下一次在8-1就重置了
+重置日期是8-1号
+│  Weekly limit:                       [████████████████████] 100% left (resets 04:27 on 8 Aug)                  │
+│  GPT-5.3-Codex-Spark Weekly limit:   [████████████████████] 100% left (resets 04:27 on 8 Aug)                  │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+一般是2天重置然后再4天重置然后再四天重置
+8-10重置了（两天重置了），再过4天重置，14号
+│  Weekly limit:                       [███████████████████░] 95% left (resets 20:15 on 17 Aug) │
+│  GPT-5.3-Codex-Spark Weekly limit:   [███████████████████░] 95% left (resets 21:38 on 17 Aug) │
+
+│  Weekly limit:                [████████████████████] 100% left (resets 20:16 on 30 Aug) │
+│  GPT-5.3-Codex-Spark limit:                                                             │
+│  5h limit:                    [████████████████████] 100% left (resets 01:16 on 24 Aug) │
+│  Weekly limit:                [████████████████████] 100% left (resets 20:16 on 30 Aug) │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+
+规律是完整的7天冷却后：
+过2天重置一次，再过两天重置一次，再过7天重置一次
+2天是按照重置时间计算而不是整点
+下一次在8-25-20:16
+│  Weekly limit:                [████████████████████] 100% left (resets 19:24 on 3 Sep)                  │
+│  GPT-5.3-Codex-Spark limit:                                                                             │
+│  5h limit:                    [████████████████████] 100% left (resets 00:24 on 28 Aug)                 │
+│  Weekly limit:                [█████████░░░░░░░░░░░] 46% left (resets 02:40 on 31 Aug)                  │
+已经两次（每两天）重置了，这次会到9月3号才重置
+
+原本9-13号重置结果提前4天，在9-8 02:17号重置，和之前没有重置时一致，难道重置卷其实不增加实际的等待实践？tui显示的是假的？
+│  Weekly limit:                [████████████████████] 100% left (resets 02:17 on 15 Sep)                 │
+│  GPT-5.3-Codex-Spark limit:                                                                             │
+│  5h limit:                    [████████████████████] 100% left (resets 07:17)                           │
+│  Weekly limit:                [████████████████████] 100% left (resets 02:17 on 15 Sep)
+到9-10-02:17会第一次重置，重置后9-12-02:17还有1次重置
+实际是9-12-04:00重置，过了4天
+│  Weekly limit:                [████████████████████] 100% left (resets 04:43 on 19 Sep)                 │
+│  GPT-5.3-Codex-Spark limit:                                                                             │
+│  5h limit:                    [████████████████████] 100% left (resets 09:43)                           │
+│  Weekly limit:                [████████████████████] 100% left (resets 04:43 on 19 Sep)                 │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────╯

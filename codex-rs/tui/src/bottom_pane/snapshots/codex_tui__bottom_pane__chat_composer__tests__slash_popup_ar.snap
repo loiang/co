@@ -1,9 +1,10 @@
 ---
 source: tui/src/bottom_pane/chat_composer.rs
+assertion_line: 9574
 expression: terminal.backend()
 ---
 "                                                            "
 "› /ar                                                       "
 "                                                            "
-"                                                            "
-"  /archive  archive this session                            "
+"  /archive         archive this session                     "
+"  /archive-except  archive every other local session        "

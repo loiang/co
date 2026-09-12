@@ -1,0 +1,16 @@
+.codex/
+.states/
+__pycache__/
+*.py[cod]
+*.tmp
+*.bak
+*.log
+node_modules/
+/.codex
+/tests
+/setup
+/templates
+/tests
+.ruff_cache
+.codex
+.commit

@@ -212,6 +212,9 @@ impl ChatWidget {
                 });
                 self.request_redraw();
             }
+            SlashCommand::ArchiveExcept => {
+                self.app_event_tx.send(AppEvent::PrepareArchiveExcept);
+            }
             SlashCommand::Delete => {
                 self.bottom_pane.show_selection_view(SelectionViewParams {
                     title: Some("Delete this session?".to_string()),
@@ -1201,6 +1204,7 @@ impl ChatWidget {
             | SlashCommand::Export
             | SlashCommand::New
             | SlashCommand::Archive
+            | SlashCommand::ArchiveExcept
             | SlashCommand::Delete
             | SlashCommand::Clear
             | SlashCommand::Resume

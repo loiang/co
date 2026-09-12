@@ -465,11 +465,7 @@ async fn run_resume_picker_with_launch_context(
         }),
         pager_keymap: runtime_keymap.pager,
         list_keymap: runtime_keymap.list,
-        initial_page_mode: if uses_remote_workspace {
-            PageLoadMode::StoreDefault
-        } else {
-            PageLoadMode::StateDbOnly
-        },
+        initial_page_mode: PageLoadMode::StateDbOnly,
         chord_keymap: runtime_keymap.chords,
     };
     run_session_picker_with_loader(
@@ -4324,7 +4320,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_picker_sends_cwd_filter_without_local_post_filtering() {
+    fn remote_picker_starts_from_state_db_with_cwd_filter_without_local_post_filtering() {
         let recorded_requests: Arc<Mutex<Vec<PageLoadRequest>>> = Arc::new(Mutex::new(Vec::new()));
         let request_sink = recorded_requests.clone();
         let loader = page_only_loader(move |req: PageLoadRequest| {
@@ -4341,6 +4337,7 @@ mod tests {
         );
         state.local_filter_cwd =
             local_picker_cwd_filter(&remote_cwd, /*uses_remote_filesystem*/ true);
+        state.initial_page_mode = PageLoadMode::StateDbOnly;
 
         state.start_initial_load();
 
@@ -4348,7 +4345,7 @@ mod tests {
             let guard = recorded_requests.lock().unwrap();
             assert_eq!(guard.len(), 1);
             assert_eq!(guard[0].cwd_filter, remote_cwd);
-            assert_eq!(guard[0].mode, PageLoadMode::StoreDefault);
+            assert_eq!(guard[0].mode, PageLoadMode::StateDbOnly);
         }
 
         let row = Row {

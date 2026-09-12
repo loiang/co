@@ -1,0 +1,4 @@
+repo = "/repo/ni"
+trust_config = "~/.codex/config.toml"
+hook_repo = "/repo/ni/configurations/software/codex"
+project_trust_root = "/repo"

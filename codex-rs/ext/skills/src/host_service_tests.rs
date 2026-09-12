@@ -896,6 +896,69 @@ async fn skills_for_config_excludes_bundled_skills_when_disabled_in_config() {
 }
 
 #[tokio::test]
+async fn bundled_skills_are_removed_and_never_loaded() {
+    for bundled_skills_enabled in [true, false] {
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        let cwd = tempfile::tempdir().expect("tempdir");
+        let system_config = tempfile::tempdir().expect("tempdir");
+        let stale_system_skill = codex_home.path().join("skills/.system/stale");
+        fs::create_dir_all(&stale_system_skill).expect("create stale system skill dir");
+        fs::write(
+            stale_system_skill.join("SKILL.md"),
+            "---\nname: stale-system\ndescription: stale bundled skill\n---\n\n# Body\n",
+        )
+        .expect("write stale system skill");
+
+        let skills_service =
+            HostSkillsService::new(codex_home.path().abs(), bundled_skills_enabled);
+        assert!(!codex_home.path().join("skills/.system").exists());
+
+        write_user_skill(&codex_home, "user", "user-skill", "from user root");
+        let recreated_system_skill = codex_home.path().join("skills/.system/recreated");
+        fs::create_dir_all(&recreated_system_skill).expect("recreate system skill dir");
+        fs::write(
+            recreated_system_skill.join("SKILL.md"),
+            "---\nname: recreated-system\ndescription: recreated bundled skill\n---\n\n# Body\n",
+        )
+        .expect("write recreated system skill");
+        let admin_skill = system_config.path().join("skills/admin");
+        fs::create_dir_all(&admin_skill).expect("create admin skill dir");
+        fs::write(
+            admin_skill.join("SKILL.md"),
+            "---\nname: admin-skill\ndescription: from admin root\n---\n\n# Body\n",
+        )
+        .expect("write admin skill");
+
+        let config_layer_stack = ConfigLayerStack::new(
+            vec![
+                ConfigLayerEntry::new(
+                    ConfigLayerSource::System {
+                        file: system_config.path().join(CONFIG_TOML_FILE).abs(),
+                    },
+                    toml::Value::Table(toml::map::Map::new()),
+                ),
+                user_config_layer(
+                    &codex_home,
+                    &format!("[skills.bundled]\nenabled = {bundled_skills_enabled}\n"),
+                ),
+            ],
+            Default::default(),
+            ConfigRequirementsToml::default(),
+        )
+        .expect("valid config layer stack");
+        let outcome =
+            skills_for_config_with_stack(&skills_service, &cwd, &config_layer_stack, &[]).await;
+        let loaded_names = outcome
+            .skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<HashSet<_>>();
+
+        assert_eq!(loaded_names, HashSet::from(["user-skill", "admin-skill"]));
+    }
+}
+
+#[tokio::test]
 async fn skills_for_cwd_uses_cached_result_until_force_reload() {
     let codex_home = tempfile::tempdir().expect("tempdir");
     let cwd = tempfile::tempdir().expect("tempdir");

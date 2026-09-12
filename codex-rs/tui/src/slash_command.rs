@@ -30,6 +30,7 @@ pub enum SlashCommand {
     Rename,
     New,
     Archive,
+    ArchiveExcept,
     Delete,
     Resume,
     Fork,
@@ -95,6 +96,7 @@ impl SlashCommand {
             SlashCommand::Rename => "rename the current thread",
             SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Archive => "archive this session",
+            SlashCommand::ArchiveExcept => "archive every other local session",
             SlashCommand::Delete => "permanently delete this session",
             SlashCommand::Clear => "clear the terminal and start a new chat",
             SlashCommand::Fork => "fork the current chat",
@@ -205,6 +207,7 @@ impl SlashCommand {
         match self {
             SlashCommand::New
             | SlashCommand::Archive
+            | SlashCommand::ArchiveExcept
             | SlashCommand::Delete
             | SlashCommand::Fork
             | SlashCommand::Worktree
