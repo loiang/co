@@ -1,0 +1,93 @@
+### Why
+
+The former customized Codex checkout combined source patches, runtime helpers,
+Nix packaging, release mutation, and consumer installation. The public
+`loiang/co` fork needs a source-built, CLI-only lifecycle that can merge fixed
+upstream commits without rewriting history and can prove the exact candidate
+works with ni's independently pinned official Code Mode host.
+
+### Goal
+
+Keep customized Codex on `main`, merge upstream into isolated upgrade
+worktrees, publish only evidence-bound CLI assets, and make consumer updates
+explicit and compare-and-swap protected. Keep the official host and all secret
+lifecycle operations outside this repository.
+
+### Accomplished
+
+#### Source customization
+
+- Preserved the customized bundled-skills removal and StateDbOnly resume picker
+  behavior on the current official Codex source baseline.
+- Added native `/archive-except <thread-id>` handling. The selected thread, its
+  ancestors, and its descendants are protected while eligible sibling
+  subtrees can be archived; the TUI includes confirmation, progress, and
+  completion/error handling.
+- Retained the migrated `codex-archive-subagents` runtime helper, while removing
+  the obsolete Niko and `codex-auth` entry points. Codex authentication data is
+  now managed by ni's `secret` lifecycle.
+
+#### Build and lifecycle
+
+- Added static-musl Codex CLI packaging, Cargo lock/vendor hashing, flake checks,
+  release layout checks, and deterministic CLI asset/manifest generation. The
+  official Code Mode host is neither compiled nor published here; ni owns and
+  pins that host independently.
+- Added repository lifecycle entry points for upstream merge worktrees,
+  conflict finalization, scoped tests, local builds, real host compatibility,
+  publication, local main fast-forward promotion, and explicit ni-backed
+  installation.
+- Upgrade fixes the upstream SHA, uses merge rather than rebase, preserves a
+  conflicted worktree for continuation, refreshes only required Cargo git
+  hashes/Nix lock nodes, and never force-pushes.
+- Publication binds source, lock, build, test, and host evidence to one clean
+  commit; it updates remote `main` only by fast-forward and atomically pushes
+  that ref with a new tag and optional notes. Existing tags and assets are
+  rejected rather than overwritten.
+- Installation resolves and builds the exact remote `main` or `co-*` tag,
+  validates it against ni's pinned host before mutation, then uses ni's
+  `--expected-rev` CAS update, lock checks, system build, and explicit
+  `rebuild ... switch --no-update`.
+
+#### Configuration and security boundary
+
+- Migrated the tracked non-secret Codex, mgrep, upstream-baseline, weekly-limit,
+  and billing-date configuration required by the fork.
+- No authentication payload, private model access, or generated environment
+  file is stored or consumed by this change.
+
+#### Verification
+
+- Python lifecycle/runtime regression suite: 53 passed, 2 skipped. The skips
+  are the expected environment-absent host cases; the real candidate/host gate
+  was exercised separately.
+- Real host compatibility: 2 passed. The compiled candidate CLI app-server
+  executed through ni's official host over both remote gRPC and sibling
+  process-owned stdio, using an isolated CODEX_HOME and a local mocked Responses
+  endpoint; the code-execution result was reinjected into the candidate flow.
+- Full crate tests: `codex-state` 201/201, `codex-skills` 50/50, and
+  `codex-skills-extension` 175/175 passed. The scoped native archive/resume and
+  customized skills regressions passed; scoped fixes for state, skills,
+  skills-extension, and TUI all passed.
+- Full `codex-tui` was not green: 4,638 of 4,648 executed tests passed, with 10
+  failures and 7 skips. Four untouched default-model tests observed the local
+  gpt-5.6-sol environment, four untouched terminal-color tests inherited
+  `NO_COLOR=1`/`TERM=dumb` and passed 6/6 with `NO_COLOR` unset, one untouched
+  kitty base64 negative assertion remained environment-sensitive, and the one
+  expected `/archive-except` popup snapshot was updated, visually inspected,
+  and rerun green in isolation.
+- Rust formatting, repository diff checks, absence of `*.snap.new`, Python Ruff,
+  lifecycle parser checks, and temporary-real-Git upgrade/promotion/publication
+  regressions passed. The frozen 20-file Rust/snapshot tree has canonical SHA-256
+  `13972e3bee2fe6c8935a79e09d53b5652bc05ac6f20618e9d5da13d68d0bc13e`.
+- Nix flake evaluation and Cargo vendor realization passed. A baseline release
+  compiled successfully, but its old install check rejected `file(1)`'s valid
+  `static-pie linked` wording. The check now accepts that wording while keeping
+  readelf's no-INTERP/no-NEEDED/RPATH/RUNPATH checks authoritative; the final
+  Nix release build is intentionally still pending.
+- GitHub reports immutable releases disabled for this repository. This workflow
+  therefore guarantees only client-side no-clobber behavior for tags/assets; it
+  does not claim GitHub server-enforced immutable releases.
+
+No branch merge, push, GitHub release, ni update, system build, or deployment
+was performed by this checkpoint.
