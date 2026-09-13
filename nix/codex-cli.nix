@@ -31,6 +31,12 @@ rustPlatform.buildRustPackage {
   sourceRoot = "co-codex-rs-source";
   inherit cargoDeps;
 
+  postPatch = ''
+    substituteInPlace Cargo.toml --replace-fail 'version = "0.0.0"' 'version = "${version}"'
+    substituteInPlace Cargo.lock --replace-fail 'version = "0.0.0"' 'version = "${version}"'
+    substituteInPlace "$cargoDepsCopy/Cargo.lock" --replace-fail 'version = "0.0.0"' 'version = "${version}"'
+  '';
+
   __structuredAttrs = true;
   cargoBuildFlags = [
     "--package"
