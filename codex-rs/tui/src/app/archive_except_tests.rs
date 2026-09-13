@@ -1,59 +1,123 @@
 use super::archive_except_failure_with_progress;
-use super::validated_next_root;
+use super::validated_next_subtree;
 use codex_protocol::ThreadId;
+use codex_state::ArchiveExceptGroup;
+use codex_state::ArchiveExceptGroupDisposition;
 use codex_state::ArchiveExceptPlan;
+use codex_state::ArchiveExceptProtectionReason;
 use codex_state::ArchiveExceptSubtree;
 use pretty_assertions::assert_eq;
-use std::collections::HashSet;
 
 fn thread_id(value: u128) -> ThreadId {
     ThreadId::from_u128(value)
 }
 
-#[test]
-fn validation_rejects_candidate_expansion_after_confirmation() {
-    let keep = thread_id(1);
-    let confirmed = thread_id(2);
-    let expanded = thread_id(3);
-    let plan = ArchiveExceptPlan {
+fn group(root: ThreadId, members: Vec<ThreadId>) -> ArchiveExceptGroup {
+    let subtree = ArchiveExceptSubtree {
+        root_thread_id: root,
+        thread_ids: members.clone(),
+    };
+    ArchiveExceptGroup {
+        root_thread_id: root,
+        member_thread_ids: members.clone(),
+        target_thread_ids: members,
+        subtrees: vec![subtree],
+        protection_reasons: Vec::new(),
+        created_at_ms: 0,
+        disposition: ArchiveExceptGroupDisposition::Candidate,
+    }
+}
+
+fn plan(keep: ThreadId, groups: Vec<ArchiveExceptGroup>) -> ArchiveExceptPlan {
+    let candidate_thread_ids = groups
+        .iter()
+        .filter(|group| group.disposition == ArchiveExceptGroupDisposition::Candidate)
+        .flat_map(|group| group.target_thread_ids.iter().copied())
+        .collect();
+    let subtrees = groups
+        .iter()
+        .filter(|group| group.disposition == ArchiveExceptGroupDisposition::Candidate)
+        .flat_map(|group| group.subtrees.iter().cloned())
+        .collect();
+    ArchiveExceptPlan {
         keep_thread_id: keep,
         protected_thread_ids: vec![keep],
-        candidate_thread_ids: vec![confirmed, expanded],
-        subtrees: vec![
-            ArchiveExceptSubtree {
-                root_thread_id: confirmed,
-                thread_ids: vec![confirmed],
-            },
-            ArchiveExceptSubtree {
-                root_thread_id: expanded,
-                thread_ids: vec![expanded],
-            },
-        ],
-    };
+        candidate_thread_ids,
+        subtrees,
+        groups,
+    }
+}
+
+#[test]
+fn validation_rejects_new_descendant_in_confirmed_group() {
+    let keep = thread_id(1);
+    let root = thread_id(2);
+    let confirmed = group(root, vec![root]);
+    let expanded = group(root, vec![root, thread_id(3)]);
 
     assert_eq!(
-        validated_next_root(&plan, &HashSet::from([confirmed])).unwrap_err(),
-        "the active candidate set expanded after confirmation; run /archive-except again"
+        validated_next_subtree(&plan(keep, vec![expanded]), &confirmed, &confirmed.subtrees)
+            .unwrap_err(),
+        "a confirmed archive group changed membership during execution"
     );
 }
 
 #[test]
-fn validation_rejects_a_subtree_that_intersects_the_protected_family() {
+fn validation_rejects_group_that_becomes_loaded() {
     let keep = thread_id(10);
-    let candidate = thread_id(11);
-    let plan = ArchiveExceptPlan {
-        keep_thread_id: keep,
-        protected_thread_ids: vec![keep],
-        candidate_thread_ids: vec![candidate],
-        subtrees: vec![ArchiveExceptSubtree {
-            root_thread_id: candidate,
-            thread_ids: vec![candidate, keep],
-        }],
-    };
+    let root = thread_id(11);
+    let confirmed = group(root, vec![root]);
+    let mut loaded = confirmed.clone();
+    loaded.disposition = ArchiveExceptGroupDisposition::Protected;
+    loaded.protection_reasons = vec![ArchiveExceptProtectionReason::Loaded];
 
     assert_eq!(
-        validated_next_root(&plan, &HashSet::from([candidate])).unwrap_err(),
-        "a replanned archive subtree is not safely contained in the confirmed set"
+        validated_next_subtree(&plan(keep, vec![loaded]), &confirmed, &confirmed.subtrees)
+            .unwrap_err(),
+        "a confirmed archive group became unsafe during execution: [Loaded]"
+    );
+}
+
+#[test]
+fn validation_ignores_unconfirmed_limit_replacement_group() {
+    let keep = thread_id(20);
+    let confirmed_root = thread_id(21);
+    let replacement_root = thread_id(22);
+    let confirmed = group(confirmed_root, vec![confirmed_root]);
+    let replacement = group(replacement_root, vec![replacement_root]);
+
+    assert_eq!(
+        validated_next_subtree(
+            &plan(keep, vec![replacement, confirmed.clone()]),
+            &confirmed,
+            &confirmed.subtrees,
+        ),
+        Ok(confirmed.subtrees[0].clone())
+    );
+}
+
+#[test]
+fn validation_rejects_relationship_change_with_same_members() {
+    let keep = thread_id(30);
+    let root = thread_id(31);
+    let child = thread_id(32);
+    let confirmed = group(root, vec![root, child]);
+    let mut changed = confirmed.clone();
+    changed.subtrees = vec![
+        ArchiveExceptSubtree {
+            root_thread_id: root,
+            thread_ids: vec![root],
+        },
+        ArchiveExceptSubtree {
+            root_thread_id: child,
+            thread_ids: vec![child],
+        },
+    ];
+
+    assert_eq!(
+        validated_next_subtree(&plan(keep, vec![changed]), &confirmed, &confirmed.subtrees)
+            .unwrap_err(),
+        "a confirmed archive group changed targets or relationships during execution"
     );
 }
 

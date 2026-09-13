@@ -561,7 +561,7 @@ pub(crate) enum AppEvent {
     ArchiveCurrentThread,
 
     /// Plan a global local archive while preserving the currently displayed thread family.
-    PrepareArchiveExcept,
+    PrepareArchiveExcept(crate::archive_except::ArchiveExceptOptions),
 
     /// Execute a previously confirmed archive-except candidate set.
     ConfirmArchiveExcept(codex_state::ArchiveExceptPlan),

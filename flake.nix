@@ -50,18 +50,6 @@
           ];
         name = "co-codex-rs-source";
       };
-      helperSource = nixpkgs.lib.cleanSourceWith {
-        src = self.outPath + "/bin";
-        filter =
-          path: type:
-          let
-            name = builtins.baseNameOf path;
-          in
-          nixpkgs.lib.cleanSourceFilter path type
-          && name != "__pycache__"
-          && !nixpkgs.lib.hasSuffix ".pyc" name;
-        name = "co-runtime-helpers";
-      };
       pkgsFor =
         system:
         import nixpkgs {
@@ -90,7 +78,6 @@
               inherit
                 pkgs
                 codexSource
-                helperSource
                 rustToolchainVersion
                 version
                 ;
@@ -114,7 +101,7 @@
           {
             codex-release-layout = pkgs.runCommand "codex-release-layout" { } ''
               test -x ${package}/bin/codex
-              test -x ${package}/bin/codex-archive-subagents
+              test ! -e ${package}/bin/codex-archive-subagents
               test ! -e ${package}/bin/codex-code-mode-host
               touch "$out"
             '';

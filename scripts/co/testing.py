@@ -31,7 +31,6 @@ def run_tests(repository: Path) -> Path:
             "-m",
             "pytest",
             "-q",
-            "test/codex_sessions",
             "test/co",
         ]
     ]
