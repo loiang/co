@@ -1,7 +1,6 @@
 {
   pkgs,
   codexSource,
-  helperSource,
   version,
   rustToolchainVersion,
 }:
@@ -36,22 +35,10 @@ let
     source = codexSource;
     stdenv = staticPkgs.stdenv;
   };
-  codex = import ./package.nix {
-    inherit (pkgs)
-      lib
-      makeWrapper
-      python3
-      stdenvNoCC
-      ;
-    inherit codexCli version;
-    source = helperSource;
-  };
-  archiveSubagentsPython = import ./archive-subagents-python.nix { inherit pkgs; };
 in
 {
-  inherit codex;
+  codex = codexCli;
   codex-cli = codexCli;
   codex-cargo-deps = codexCli.cargoDeps;
-  codex-archive-subagents-python = archiveSubagentsPython;
-  default = codex;
+  default = codexCli;
 }

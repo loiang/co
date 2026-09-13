@@ -1,8 +1,0 @@
-#!/usr/bin/env python3
-"""Invoke the conservative Codex subagent archive owner."""
-
-from codex_sessions.cli import entrypoint
-
-
-if __name__ == "__main__":
-    raise SystemExit(entrypoint())

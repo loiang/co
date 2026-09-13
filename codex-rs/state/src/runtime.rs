@@ -58,7 +58,12 @@ mod thread_section_order;
 mod thread_sections;
 mod threads;
 
+pub use archive_except::ArchiveExceptGroup;
+pub use archive_except::ArchiveExceptGroupDisposition;
+pub use archive_except::ArchiveExceptLimit;
 pub use archive_except::ArchiveExceptPlan;
+pub use archive_except::ArchiveExceptProtectionReason;
+pub use archive_except::ArchiveExceptRequest;
 pub use archive_except::ArchiveExceptSubtree;
 pub use external_agent_config_imports::ExternalAgentConfigImportDetailsRecord;
 pub use external_agent_config_imports::ExternalAgentConfigImportFailureRecord;

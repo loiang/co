@@ -434,7 +434,9 @@ impl App {
             AppEvent::ArchiveCurrentThread => {
                 return self.archive_current_thread(tui, app_server).await;
             }
-            AppEvent::PrepareArchiveExcept => self.prepare_archive_except().await,
+            AppEvent::PrepareArchiveExcept(options) => {
+                self.prepare_archive_except(app_server, options).await;
+            }
             AppEvent::ConfirmArchiveExcept(plan) => {
                 self.confirm_archive_except(app_server, plan).await;
             }

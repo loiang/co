@@ -32,7 +32,12 @@ pub use model::QueuedUserSubmissionRecord;
 pub use model::RolloutMigrationCursor;
 pub use model::RolloutMigrationSkippedRollout;
 pub use model::RolloutMigrationState;
+pub use runtime::ArchiveExceptGroup;
+pub use runtime::ArchiveExceptGroupDisposition;
+pub use runtime::ArchiveExceptLimit;
 pub use runtime::ArchiveExceptPlan;
+pub use runtime::ArchiveExceptProtectionReason;
+pub use runtime::ArchiveExceptRequest;
 pub use runtime::ArchiveExceptSubtree;
 /// Preferred entrypoint: owns configuration and metrics.
 pub use runtime::StateRuntime;

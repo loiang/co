@@ -2887,7 +2887,44 @@ async fn slash_archive_except_requests_a_fresh_global_plan() {
 
     chat.dispatch_command(SlashCommand::ArchiveExcept);
 
-    assert_matches!(rx.try_recv(), Ok(AppEvent::PrepareArchiveExcept));
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::PrepareArchiveExcept(options))
+            if options == crate::archive_except::ArchiveExceptOptions::default()
+    );
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[tokio::test]
+async fn slash_archive_except_parses_preview_and_limit() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    submit_composer_text(&mut chat, "/archive-except --preview --limit 12");
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::PrepareArchiveExcept(options))
+            if options.mode == crate::archive_except::ArchiveExceptMode::Preview
+                && options.limit == std::num::NonZeroUsize::new(12)
+    );
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[tokio::test]
+async fn slash_archive_except_invalid_args_show_usage_without_planning() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    submit_composer_text(&mut chat, "/archive-except --limit 0");
+
+    let rendered = drain_insert_history(&mut rx)
+        .iter()
+        .map(|cell| lines_to_single_string(cell))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains(crate::archive_except::ARCHIVE_EXCEPT_USAGE),
+        "expected usage message, got {rendered:?}"
+    );
     assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
 }
 
@@ -2897,13 +2934,23 @@ async fn archive_except_confirmation_is_cancel_safe_and_emits_the_confirmed_plan
     let keep = ThreadId::from_u128(100);
     let first = ThreadId::from_u128(101);
     let second = ThreadId::from_u128(102);
+    let subtree = codex_state::ArchiveExceptSubtree {
+        root_thread_id: first,
+        thread_ids: vec![first, second],
+    };
     let plan = codex_state::ArchiveExceptPlan {
         keep_thread_id: keep,
         protected_thread_ids: vec![keep],
         candidate_thread_ids: vec![first, second],
-        subtrees: vec![codex_state::ArchiveExceptSubtree {
+        subtrees: vec![subtree.clone()],
+        groups: vec![codex_state::ArchiveExceptGroup {
             root_thread_id: first,
-            thread_ids: vec![first, second],
+            member_thread_ids: vec![first, second],
+            target_thread_ids: vec![first, second],
+            subtrees: vec![subtree],
+            protection_reasons: Vec::new(),
+            created_at_ms: 1,
+            disposition: codex_state::ArchiveExceptGroupDisposition::Candidate,
         }],
     };
 
@@ -2926,6 +2973,77 @@ async fn archive_except_confirmation_is_cancel_safe_and_emits_the_confirmed_plan
         rx.try_recv(),
         Ok(AppEvent::ConfirmArchiveExcept(actual)) if actual == plan
     );
+}
+
+#[tokio::test]
+async fn archive_except_preview_shows_group_statuses_without_emitting_archive_event() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let keep = ThreadId::from_u128(200);
+    let candidate = ThreadId::from_u128(201);
+    let protected = ThreadId::from_u128(202);
+    let limited = ThreadId::from_u128(203);
+    let archived = ThreadId::from_u128(204);
+    let candidate_subtree = codex_state::ArchiveExceptSubtree {
+        root_thread_id: candidate,
+        thread_ids: vec![candidate],
+    };
+    let plan = codex_state::ArchiveExceptPlan {
+        keep_thread_id: keep,
+        protected_thread_ids: vec![keep, protected],
+        candidate_thread_ids: vec![candidate],
+        subtrees: vec![candidate_subtree.clone()],
+        groups: vec![
+            codex_state::ArchiveExceptGroup {
+                root_thread_id: candidate,
+                member_thread_ids: vec![candidate],
+                target_thread_ids: vec![candidate],
+                subtrees: vec![candidate_subtree],
+                protection_reasons: Vec::new(),
+                created_at_ms: 1,
+                disposition: codex_state::ArchiveExceptGroupDisposition::Candidate,
+            },
+            codex_state::ArchiveExceptGroup {
+                root_thread_id: protected,
+                member_thread_ids: vec![protected],
+                target_thread_ids: vec![protected],
+                subtrees: Vec::new(),
+                protection_reasons: vec![
+                    codex_state::ArchiveExceptProtectionReason::Loaded,
+                    codex_state::ArchiveExceptProtectionReason::Pinned,
+                ],
+                created_at_ms: 2,
+                disposition: codex_state::ArchiveExceptGroupDisposition::Protected,
+            },
+            codex_state::ArchiveExceptGroup {
+                root_thread_id: limited,
+                member_thread_ids: vec![limited],
+                target_thread_ids: vec![limited],
+                subtrees: Vec::new(),
+                protection_reasons: Vec::new(),
+                created_at_ms: 3,
+                disposition: codex_state::ArchiveExceptGroupDisposition::LimitSkipped,
+            },
+            codex_state::ArchiveExceptGroup {
+                root_thread_id: archived,
+                member_thread_ids: vec![archived],
+                target_thread_ids: Vec::new(),
+                subtrees: Vec::new(),
+                protection_reasons: Vec::new(),
+                created_at_ms: 4,
+                disposition: codex_state::ArchiveExceptGroupDisposition::AlreadyArchived,
+            },
+        ],
+    };
+
+    chat.show_archive_except_preview(plan);
+
+    assert_chatwidget_snapshot!(
+        "slash_archive_except_preview_popup",
+        render_bottom_popup(&chat, /*width*/ 100)
+    );
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    assert!(!chat.bottom_pane.has_active_view());
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
 }
 
 #[tokio::test]

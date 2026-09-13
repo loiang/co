@@ -9,6 +9,8 @@ use super::*;
 use crate::app::WindowsSandboxHost;
 use crate::app_event::ManagedWorktreeMode;
 use crate::app_event::ThreadGoalSetMode;
+use crate::archive_except::ARCHIVE_EXCEPT_USAGE;
+use crate::archive_except::ArchiveExceptOptions;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
@@ -233,7 +235,9 @@ impl ChatWidget {
                 self.request_redraw();
             }
             SlashCommand::ArchiveExcept => {
-                self.app_event_tx.send(AppEvent::PrepareArchiveExcept);
+                self.app_event_tx.send(AppEvent::PrepareArchiveExcept(
+                    ArchiveExceptOptions::default(),
+                ));
             }
             SlashCommand::Delete => {
                 self.bottom_pane.show_selection_view(SelectionViewParams {
@@ -1033,6 +1037,12 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::ResumeSessionByIdOrName(args));
             }
+            SlashCommand::ArchiveExcept => match ArchiveExceptOptions::parse(trimmed) {
+                Ok(options) => self
+                    .app_event_tx
+                    .send(AppEvent::PrepareArchiveExcept(options)),
+                Err(_) => self.add_error_message(ARCHIVE_EXCEPT_USAGE.to_string()),
+            },
             SlashCommand::Pets
                 if matches!(
                     args.trim().to_ascii_lowercase().as_str(),
