@@ -1,5 +1,17 @@
 {
   "nodes": {
+    "build-version": {
+      "flake": false,
+      "locked": {
+        "path": "./nix/build-version",
+        "type": "path"
+      },
+      "original": {
+        "path": "./nix/build-version",
+        "type": "path"
+      },
+      "parent": []
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1769461804,
@@ -18,6 +30,7 @@
     },
     "root": {
       "inputs": {
+        "build-version": "build-version",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"
       }

@@ -1,12 +1,15 @@
 """Build the static CLI and emit checksummed release assets."""
 
 import gzip
+import json
+import re
 import struct
 import subprocess
 import tarfile
-import tomllib
+import tempfile
 from pathlib import Path
 from typing import Any, BinaryIO
+from urllib.request import Request, urlopen
 
 from common import (
     LifecycleError,
@@ -20,6 +23,14 @@ from common import (
 )
 from evidence import source_identity
 
+OFFICIAL_LATEST_RELEASE_URL = (
+    "https://api.github.com/repos/openai/codex/releases/latest"
+)
+_MAX_RELEASE_METADATA_BYTES = 1024 * 1024
+_STABLE_RELEASE_TAG = re.compile(
+    r"rust-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+)
+
 
 def _platform(root: Path) -> str:
     result = run(
@@ -32,14 +43,37 @@ def _platform(root: Path) -> str:
     return value
 
 
-def _version(root: Path) -> str:
+def _official_version() -> str:
+    """Resolve the stable upstream version once for a reproducible build input."""
+    request = Request(
+        OFFICIAL_LATEST_RELEASE_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "loiang-co-build",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
     try:
-        workspace = tomllib.loads(
-            (root / "codex-rs/Cargo.toml").read_text(encoding="utf-8")
-        )
-        return str(workspace["workspace"]["package"]["version"])
-    except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as error:
-        raise LifecycleError("无法读取 workspace package version") from error
+        with urlopen(request, timeout=30) as response:
+            raw_metadata = response.read(_MAX_RELEASE_METADATA_BYTES + 1)
+    except OSError as error:
+        raise LifecycleError("无法解析官方 latest stable release") from error
+    if len(raw_metadata) > _MAX_RELEASE_METADATA_BYTES:
+        raise LifecycleError("官方 latest stable release metadata 超过 1 MiB")
+    try:
+        metadata = json.loads(raw_metadata)
+    except (json.JSONDecodeError, UnicodeError) as error:
+        raise LifecycleError(
+            "官方 latest stable release metadata 不是有效 JSON"
+        ) from error
+    if not isinstance(metadata, dict):
+        raise LifecycleError("官方 latest stable release metadata 不是 JSON object")
+    tag = metadata.get("tag_name")
+    if metadata.get("draft") is not False or metadata.get("prerelease") is not False:
+        raise LifecycleError("官方 latest stable release 不是稳定 release")
+    if not isinstance(tag, str) or _STABLE_RELEASE_TAG.fullmatch(tag) is None:
+        raise LifecycleError("官方 latest stable release tag 不是 rust-v<semver>")
+    return tag.removeprefix("rust-v")
 
 
 def _program_headers(binary: BinaryIO) -> tuple[str, int, int, int]:
@@ -60,7 +94,7 @@ def _program_headers(binary: BinaryIO) -> tuple[str, int, int, int]:
     return endian, offset, entry_size, count
 
 
-def verify_static_elf(binary_path: Path) -> None:
+def verify_static_elf(binary_path: Path, expected_version: str | None = None) -> None:
     with binary_path.open("rb") as binary:
         endian, offset, entry_size, count = _program_headers(binary)
         for index in range(count):
@@ -73,8 +107,17 @@ def verify_static_elf(binary_path: Path) -> None:
     result = subprocess.run(
         [str(binary_path), "--version"], check=False, capture_output=True, text=True
     )
-    if result.returncode or "codex" not in (result.stdout or "").lower():
+    reported_version = (result.stdout or "").strip()
+    if result.returncode or "codex" not in reported_version.lower():
         raise LifecycleError("static CLI --version smoke 失败")
+    if (
+        expected_version is not None
+        and reported_version != f"codex-cli {expected_version}"
+    ):
+        raise LifecycleError(
+            "static CLI version 不匹配: "
+            f"expected codex-cli {expected_version}, got {reported_version}"
+        )
 
 
 def _write_archive(binary: Path, archive: Path) -> None:
@@ -91,34 +134,44 @@ def _write_archive(binary: Path, archive: Path) -> None:
                     bundle.addfile(info, source)
 
 
-def _nix_build(root: Path, cores: int = 0) -> tuple[str, Path]:
+def _nix_build(root: Path, version: str, cores: int = 0) -> tuple[str, Path]:
     if cores < 0:
         raise LifecycleError("Nix cores 必须是非负整数")
-    result = run(
-        [
-            "nix",
-            "build",
-            git_flake(root, "codex"),
-            "--no-link",
-            "--print-out-paths",
-            "--no-write-lock-file",
-            "--max-jobs",
-            "1",
-            "--cores",
-            str(cores),
-        ],
-        cwd=root,
-    )
+    with tempfile.TemporaryDirectory(prefix="co-build-version-") as temporary:
+        version_input = Path(temporary)
+        (version_input / "version").write_text(f"{version}\n", encoding="utf-8")
+        result = run(
+            [
+                "nix",
+                "build",
+                git_flake(root, "codex"),
+                "--override-input",
+                "build-version",
+                f"path:{version_input}",
+                "--no-link",
+                "--print-out-paths",
+                "--no-write-lock-file",
+                "--max-jobs",
+                "1",
+                "--cores",
+                str(cores),
+            ],
+            cwd=root,
+        )
     outputs = tuple(line for line in (result.stdout or "").splitlines() if line)
     if len(outputs) != 1:
         raise LifecycleError(f"Nix build 应返回一个 store path，实际 {len(outputs)} 个")
     binary = Path(outputs[0]) / "bin/codex"
-    verify_static_elf(binary)
+    verify_static_elf(binary, expected_version=version)
     return outputs[0], binary
 
 
 def _emit_assets(
-    root: Path, identity: dict[str, Any], store_path: str, binary: Path
+    root: Path,
+    identity: dict[str, Any],
+    store_path: str,
+    binary: Path,
+    version: str,
 ) -> Path:
     platform = _platform(root)
     build_dir = (
@@ -133,7 +186,7 @@ def _emit_assets(
         "repository": "loiang/co",
         "upstreamRev": identity["upstreamRev"],
         "sourceRev": identity["sourceRev"],
-        "sourceVersion": _version(root),
+        "sourceVersion": version,
         "platform": platform,
         "checksums": {"codex": sha256(binary), archive.name: sha256(archive)},
     }
@@ -172,5 +225,6 @@ def build(repository: Path, cores: int = 0) -> Path:
     root = require_repo(repository)
     require_no_untracked(root)
     identity = source_identity(root)
-    store_path, binary = _nix_build(root, cores)
-    return _emit_assets(root, identity, store_path, binary)
+    version = _official_version()
+    store_path, binary = _nix_build(root, version, cores)
+    return _emit_assets(root, identity, store_path, binary, version)

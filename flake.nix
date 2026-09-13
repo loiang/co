@@ -2,6 +2,10 @@
   description = "Development and source-build Nix flake for OpenAI Codex CLI";
 
   inputs = {
+    build-version = {
+      url = "path:./nix/build-version";
+      flake = false;
+    };
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -11,6 +15,7 @@
 
   outputs =
     {
+      build-version,
       self,
       nixpkgs,
       rust-overlay,
@@ -24,8 +29,12 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      cargoToml = builtins.fromTOML (builtins.readFile ./codex-rs/Cargo.toml);
-      version = cargoToml.workspace.package.version;
+      rawVersion = nixpkgs.lib.removeSuffix "\n" (builtins.readFile (build-version + "/version"));
+      version =
+        if builtins.match "(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)" rawVersion != null then
+          rawVersion
+        else
+          throw "build-version must contain a stable SemVer";
       rustToolchainToml = builtins.fromTOML (builtins.readFile ./codex-rs/rust-toolchain.toml);
       rustToolchainVersion = rustToolchainToml.toolchain.channel;
       codexSource = nixpkgs.lib.cleanSourceWith {
