@@ -75,4 +75,3 @@ def _merge_upstream(
         f"upstream merge 冲突；worktree 已保留: {candidate.root}\n"
         f"Git 冲突诊断已输出到终端。\n续做命令:\n{command}"
     )
-

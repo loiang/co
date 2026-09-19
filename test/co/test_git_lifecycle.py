@@ -175,7 +175,9 @@ def test_candidate_validation_passes_build_core_limit(tmp_path: Path) -> None:
     assert build_command[-2:] == ["--cores", "4"]
 
 
-def test_fetch_inherits_output_and_revision_query_remains_captured(tmp_path: Path) -> None:
+def test_fetch_inherits_output_and_revision_query_remains_captured(
+    tmp_path: Path,
+) -> None:
     from git_lifecycle import _resolve_target
 
     revision = "a" * 40
@@ -189,11 +191,14 @@ def test_fetch_inherits_output_and_revision_query_remains_captured(tmp_path: Pat
     fetch, query, _ancestry = process.call_args_list
     assert (fetch.kwargs["stdout"], fetch.kwargs["stderr"]) == (None, None)
     assert (query.kwargs["stdout"], query.kwargs["stderr"]) == (
-        subprocess.PIPE, subprocess.PIPE
+        subprocess.PIPE,
+        subprocess.PIPE,
     )
 
 
-def test_failed_merge_without_merge_state_does_not_offer_continue(tmp_path: Path) -> None:
+def test_failed_merge_without_merge_state_does_not_offer_continue(
+    tmp_path: Path,
+) -> None:
     from common import LifecycleError
     from git_lifecycle import _merge_upstream
 

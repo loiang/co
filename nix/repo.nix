@@ -4,7 +4,6 @@
   source,
   backendSource,
   version,
-  runCommand,
   makeWrapper,
   python3,
   gitMinimal,
@@ -14,12 +13,13 @@ rustPlatform.buildRustPackage {
   pname = "repo";
   inherit version;
   src = source;
-  sourceRoot = "co-codex-rs-source";
-  cargoDeps = import ./cargo-deps.nix {
-    inherit runCommand rustPlatform;
-    lockFile = ../codex-rs/Cargo.lock;
-    outputHashes = import ./cargo-git-hashes.nix;
+  cargoDeps = rustPlatform.importCargoLock {
+    lockFile = ./repo-cargo/Cargo.lock;
   };
+  postPatch = ''
+    cp ${./repo-cargo/Cargo.toml} Cargo.toml
+    cp ${./repo-cargo/Cargo.lock} Cargo.lock
+  '';
   cargoBuildFlags = [
     "--package"
     "codex-repo"
