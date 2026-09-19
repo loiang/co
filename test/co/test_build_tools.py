@@ -111,11 +111,11 @@ def test_builder_environment_prepends_make_without_nix_command(tmp_path: Path) -
     make = _make_fixture(tmp_path / "make-bin" / "make")
     request = PackageRequest(tmp_path, tmp_path, "a" * 40, "0.154.0")
 
-    with patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=False), patch(
-        "native_package.resolve_make_bin", return_value=make
+    with (
+        patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=False),
+        patch("native_package.resolve_make_bin", return_value=make),
     ):
         env = _environment(request)
 
-    assert env["PATH"] == f"{make.parent}:/usr/bin"
-    assert "nix" not in env["PATH"].lower()
-    assert "nix" not in env.get("MAKE", "").lower()
+    assert env["PATH"].split(os.pathsep) == [str(make.parent), "/usr/bin"]
+    assert "MAKE" not in env
