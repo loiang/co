@@ -85,7 +85,7 @@ pub fn generate_typescript_schema_fixture_subtree_for_tests() -> Result<BTreeMap
 
 /// Regenerates `schema/typescript/`, `schema/json/`, and the stable embedded exports.
 ///
-/// This is intended to be used by tooling (e.g., `just write-app-server-schema`).
+/// This is intended to be used by `app-server-protocol/scripts/write_schema_fixtures.py`.
 /// It deletes any previously generated files so stale artifacts are removed.
 pub fn write_schema_fixtures(schema_root: &Path, prettier: Option<&Path>) -> Result<()> {
     write_schema_fixtures_with_options(schema_root, prettier, SchemaFixtureOptions::default())

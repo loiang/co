@@ -110,8 +110,8 @@ def test_conflict_preserves_candidate_worktree_for_continuation(tmp_path: Path) 
     assert len(matching) == 1
     assert matching[0].is_dir()
     assert str(matching[0]) in message
-    assert "just --justfile" in message
-    assert "co-upgrade-finalize" in message
+    assert "python3" in message
+    assert "scripts/co/cli.py upgrade-finalize" in message
     assert "--cores 4" in message
 
 
@@ -158,8 +158,14 @@ def test_candidate_validation_passes_build_core_limit(tmp_path: Path) -> None:
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    with patch("git_lifecycle.run", side_effect=capture):
+    with (
+        patch("git_lifecycle.require_repo", return_value=tmp_path),
+        patch("git_lifecycle.run", side_effect=capture),
+    ):
         validate_candidate(candidate, build_cores=4)
 
-    build_command = next(command for command in commands if "co-build" in command)
+    assert all(
+        command[1] == str(tmp_path / "scripts/co/cli.py") for command in commands
+    )
+    build_command = next(command for command in commands if "build" in command)
     assert build_command[-2:] == ["--cores", "4"]

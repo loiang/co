@@ -132,7 +132,6 @@
               pkgs.cargo-nextest
               pkgs.cmake
               pkgs.file
-              pkgs.just
               pkgs.llvmPackages.clang
               pkgs.llvmPackages.libclang.lib
               pkgs.nix-prefetch-git

@@ -4,12 +4,12 @@ This package contains the implementation behind `scripts/build_codex_package.py`
 The top-level script is the stable executable entry point; these modules keep the
 package-building logic split by responsibility.
 
-Run the builder through `just`:
+Run the builder from the repository root:
 
 ```bash
-just assemble-codex-package --help
-just assemble-codex-package --variant codex-app-server
-just assemble-codex-package --target x86_64-unknown-linux-gnu
+CODEX_REPO_ROOT="$PWD" python3 scripts/build_codex_package.py --help
+CODEX_REPO_ROOT="$PWD" python3 scripts/build_codex_package.py --variant codex-app-server
+CODEX_REPO_ROOT="$PWD" python3 scripts/build_codex_package.py --target x86_64-unknown-linux-gnu
 ```
 
 The builder creates a canonical Codex package directory:

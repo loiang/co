@@ -64,9 +64,6 @@ jobs:
       - name: Check root README ToC
         run: python3 scripts/readme_toc.py README.md
 
-      - name: Check formatting (run `just fmt` to fix)
-        run: just fmt-check
-
       - name: Prettier (run `pnpm run format:fix` to fix)
         run: pnpm run format
 

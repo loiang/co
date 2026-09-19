@@ -4,7 +4,7 @@
   What it does:
   - Installs Rust toolchain (via winget rustup) and required components
   - Installs Visual Studio 2022 Build Tools (MSVC + Windows SDK)
-  - Installs helpful CLIs used by the repo: git, ripgrep (rg), just, cmake
+  - Installs helpful CLIs used by the repo: git, ripgrep (rg), cmake
   - Installs cargo-insta (for snapshot tests) via cargo
   - Ensures PATH contains Cargo bin for the current session
   - Builds the workspace (cargo build)
@@ -156,11 +156,7 @@ winget install @WingetArgs --id Git.Git | Out-Host
 Write-Host "-- Installing ripgrep (rg)" -ForegroundColor DarkCyan
 winget install @WingetArgs --id BurntSushi.ripgrep.MSVC | Out-Host
 
-# 5) just
-Write-Host "-- Installing just" -ForegroundColor DarkCyan
-winget install @WingetArgs --id Casey.Just | Out-Host
-
-# 6) cmake (commonly needed by native crates)
+# 5) cmake (commonly needed by native crates)
 Write-Host "-- Installing CMake" -ForegroundColor DarkCyan
 winget install @WingetArgs --id Kitware.CMake | Out-Host
 

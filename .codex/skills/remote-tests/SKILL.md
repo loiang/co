@@ -61,7 +61,7 @@ bash -c '
   trap codex_remote_env_cleanup EXIT
 
   cd codex-rs
-  just test -p codex-core --test all
+  RUST_MIN_STACK=8388608 NEXTEST_PROFILE=local cargo nextest run --no-fail-fast -p codex-core --test all
 '
 ```
 
@@ -75,7 +75,7 @@ bash -c '
   trap codex_remote_env_cleanup EXIT
 
   cd codex-rs
-  just test -p codex-app-server --test all
+  RUST_MIN_STACK=8388608 NEXTEST_PROFILE=local cargo nextest run --no-fail-fast -p codex-app-server --test all
 '
 ```
 

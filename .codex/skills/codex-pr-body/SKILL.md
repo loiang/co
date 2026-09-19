@@ -21,7 +21,7 @@ Avoid references to absolute paths on my local disk. When talking about a path t
 
 Avoid references to confidential information including but not limited to codenames or OpenAI-internal URLs.
 
-It is generally helpful to discuss how the change was verified. That said, it is unnecessary to mention things that CI checks automatically, e.g., do not include "ran `just fmt`" as part of the test plan. Though identifying the new tests that were purposely introduced to verify the new behavior introduced by the pull request is often appropriate.
+It is generally helpful to discuss how the change was verified. That said, it is unnecessary to mention routine formatting that CI checks automatically. Identifying the new tests purposely introduced to verify the pull request's behavior is often appropriate.
 
 Make use of Markdown to format the pull request professionally. Ensure "code things" appear in single backticks when referenced inline. Fenced code blocks are useful when referencing code or showing a shell transcript. Also, make use of GitHub permalinks when citing existing pieces of code that are relevant to the change.
 

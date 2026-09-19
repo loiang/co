@@ -99,7 +99,7 @@ integration stages; a prepared runtime is required for packaged lifecycle calls.
 
 The ignored `packaged_runtime` integration test uses real libraries prepared for
 the host platform. From `codex-rs`, run
-`CODEX_TEST_VOICE_RUNTIME=/absolute/prepared/runtime just test -p codex-voice-host --test packaged_runtime --run-ignored all`.
+`CODEX_TEST_VOICE_RUNTIME=/absolute/prepared/runtime cargo nextest run -p codex-voice-host --test packaged_runtime --run-ignored all`.
 It copies and relocates the runtime with the real helper, checks client
 initialization and close, and rejects duplicate initialization. This requires
 native inputs separately; ordinary CI does not run this ignored test. It tests

@@ -5,7 +5,7 @@
 # Usage (source-only):
 #   source scripts/test-remote-env.sh
 #   cd codex-rs
-#   just test -p codex-core --test all remote_test_env_can_connect_and_use_filesystem
+#   RUST_MIN_STACK=8388608 NEXTEST_PROFILE=local cargo nextest run --no-fail-fast -p codex-core --test all remote_test_env_can_connect_and_use_filesystem
 #   codex_remote_env_cleanup
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

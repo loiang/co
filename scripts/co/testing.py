@@ -1,4 +1,4 @@
-"""Run repository Python regressions and focused official Rust recipes."""
+"""Run repository Python regressions and focused Rust tests in locked Nix."""
 
 from pathlib import Path
 
@@ -15,10 +15,21 @@ RUST_TESTS = (
     ),
     ("codex-tui", "archive_except"),
 )
+RUST_MIN_STACK = "8388608"
 
 
 def run_tests(repository: Path) -> Path:
-    """Run Python regressions and focused tests via the official just recipe."""
+    """Run lifecycle regressions and focused Rust tests in the candidate shell.
+
+    The candidate's locked flake supplies Python, Cargo, and nextest so host
+    tool versions cannot change the verification result.
+
+    Args:
+        repository: Candidate checkout whose locked environment owns the run.
+
+    Returns:
+        Path to the atomic verification record.
+    """
     root = require_repo(repository)
     commands: list[list[str]] = [
         [
@@ -37,10 +48,20 @@ def run_tests(repository: Path) -> Path:
     for package, test_name in RUST_TESTS:
         commands.append(
             [
-                "just",
-                "--justfile",
-                str(root / "justfile"),
-                "test",
+                "nix",
+                "develop",
+                git_flake(root),
+                "--no-update-lock-file",
+                "--command",
+                "env",
+                f"RUST_MIN_STACK={RUST_MIN_STACK}",
+                "NEXTEST_PROFILE=local",
+                "cargo",
+                "nextest",
+                "run",
+                "--no-fail-fast",
+                "--manifest-path",
+                "codex-rs/Cargo.toml",
                 "-p",
                 package,
                 test_name,

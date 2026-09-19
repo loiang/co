@@ -90,6 +90,7 @@ CHANGELOG.ignore.md
 # nix related
 .direnv
 .envrc
+/.nix-develop*
 
 # Python bytecode files
 __pycache__/

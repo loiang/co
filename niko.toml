@@ -1,0 +1,296 @@
+schema_version = 2
+
+[project]
+description = "Codex fork 生命周期管理"
+doc_target = "command:co"
+tags = ["co"]
+
+[capabilities.upgrade]
+command_path = ["upgrade"]
+category = "governance"
+description = "创建、完成并验证 upstream 升级 candidate"
+doc_target = "command:co-upgrade"
+tags = ["governance", "upgrade"]
+transport = "argv"
+operation_id = "upgrade"
+program = "python3"
+args = ["scripts/co/cli.py", "upgrade", "--repo", "."]
+cwd = "repo"
+risk = "repository-write"
+confirmation = "required"
+
+[[capabilities.upgrade.parameters]]
+id = "revision"
+kind = "positional"
+help = "待合并的 upstream revision"
+value_type = "string"
+value_name = "REVISION"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "revision"
+
+[[capabilities.upgrade.parameters]]
+id = "ni-repo"
+kind = "option"
+help = "ni consumer checkout 路径"
+value_type = "string"
+value_name = "PATH"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "ni-repo"
+
+[[capabilities.upgrade.parameters]]
+id = "cores"
+kind = "option"
+help = "Nix build 使用的 CPU core 数量，零表示全部"
+value_type = "integer"
+value_name = "N"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "cores"
+
+[capabilities.upgrade-finalize]
+command_path = ["upgrade-finalize"]
+category = "governance"
+description = "完成保留在 candidate worktree 中的 upstream 合并"
+doc_target = "command:co-upgrade-finalize"
+tags = ["governance", "upgrade-finalize"]
+transport = "argv"
+operation_id = "upgrade-finalize"
+program = "python3"
+args = ["scripts/co/cli.py", "upgrade-finalize", "--repo", "."]
+cwd = "repo"
+risk = "repository-write"
+confirmation = "required"
+
+[[capabilities.upgrade-finalize.parameters]]
+id = "upstream-rev"
+kind = "option"
+help = "已合并的 upstream commit"
+value_type = "string"
+value_name = "REV"
+required = true
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "upstream-rev"
+
+[[capabilities.upgrade-finalize.parameters]]
+id = "ni-repo"
+kind = "option"
+help = "ni consumer checkout 路径"
+value_type = "string"
+value_name = "PATH"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "ni-repo"
+
+[[capabilities.upgrade-finalize.parameters]]
+id = "cores"
+kind = "option"
+help = "Nix build 使用的 CPU core 数量，零表示全部"
+value_type = "integer"
+value_name = "N"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "cores"
+
+[capabilities.promote]
+command_path = ["promote"]
+category = "governance"
+description = "将已验证的 candidate fast-forward 到本地 main"
+doc_target = "command:co-promote"
+tags = ["governance", "promote"]
+transport = "argv"
+operation_id = "promote"
+program = "python3"
+args = ["scripts/co/cli.py", "promote", "--repo", "."]
+cwd = "repo"
+risk = "repository-write"
+confirmation = "required"
+
+[[capabilities.promote.parameters]]
+id = "candidate"
+kind = "positional"
+help = "待提升的 candidate branch 或 commit"
+value_type = "string"
+value_name = "CANDIDATE"
+required = true
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "candidate"
+
+[capabilities.test]
+command_path = ["test"]
+category = "governance"
+description = "运行 fork Python regressions 与 focused Rust tests"
+doc_target = "command:co-test"
+tags = ["governance", "test"]
+transport = "argv"
+operation_id = "test"
+program = "python3"
+args = ["scripts/co/cli.py", "test", "--repo", "."]
+cwd = "repo"
+risk = "build"
+confirmation = "never"
+parameters = []
+
+[capabilities.build]
+command_path = ["build"]
+category = "governance"
+description = "构建 fork 的 Nix release artifact"
+doc_target = "command:co-build"
+tags = ["governance", "build"]
+transport = "argv"
+operation_id = "build"
+program = "python3"
+args = ["scripts/co/cli.py", "build", "--repo", "."]
+cwd = "repo"
+risk = "build"
+confirmation = "never"
+
+[[capabilities.build.parameters]]
+id = "cores"
+kind = "option"
+help = "Nix build 使用的 CPU core 数量，零表示全部"
+value_type = "integer"
+value_name = "N"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "cores"
+
+[capabilities.test-host]
+command_path = ["test-host"]
+category = "governance"
+description = "验证 fork artifact 与 host package 的集成"
+doc_target = "command:co-test-host"
+tags = ["governance", "test-host"]
+transport = "argv"
+operation_id = "test-host"
+program = "python3"
+args = ["scripts/co/cli.py", "test-host", "--repo", "."]
+cwd = "repo"
+risk = "build"
+confirmation = "never"
+
+[[capabilities.test-host.parameters]]
+id = "ni-repo"
+kind = "option"
+help = "ni consumer checkout 路径"
+value_type = "string"
+value_name = "PATH"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "ni-repo"
+
+[capabilities.publish]
+command_path = ["publish"]
+category = "governance"
+description = "发布已验证的 fork release"
+doc_target = "command:co-publish"
+tags = ["governance", "publish"]
+transport = "argv"
+operation_id = "publish"
+program = "python3"
+args = ["scripts/co/cli.py", "publish", "--repo", "."]
+cwd = "repo"
+risk = "publish"
+confirmation = "required"
+
+[[capabilities.publish.parameters]]
+id = "args"
+kind = "positional"
+help = "显式传给 owner 的参数；使用 -- 建立 passthrough boundary"
+value_type = "string"
+value_name = "ARG"
+required = false
+repeatable = true
+aliases = []
+conflicts_with = []
+normalized_key = "args"
+
+[capabilities.install]
+command_path = ["install"]
+category = "governance"
+description = "将 fork release 安装到指定 host"
+doc_target = "command:co-install"
+tags = ["governance", "install"]
+transport = "argv"
+operation_id = "install"
+program = "python3"
+args = ["scripts/co/cli.py", "install", "--repo", "."]
+cwd = "repo"
+risk = "system-change"
+confirmation = "required"
+
+[[capabilities.install.parameters]]
+id = "host"
+kind = "positional"
+help = "目标 host 名称"
+value_type = "string"
+value_name = "HOST"
+required = true
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "host"
+
+[[capabilities.install.parameters]]
+id = "tag"
+kind = "positional"
+help = "待安装的 release tag"
+value_type = "string"
+value_name = "TAG"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "tag"
+
+[[capabilities.install.parameters]]
+id = "ni-repo"
+kind = "option"
+help = "ni consumer checkout 路径"
+value_type = "string"
+value_name = "PATH"
+required = false
+repeatable = false
+aliases = []
+conflicts_with = []
+normalized_key = "ni-repo"
+
+[[capabilities.install.parameters]]
+id = "args"
+kind = "positional"
+help = "显式传给 owner 的参数；使用 -- 建立 passthrough boundary，install preflight 必须先显式提供 TAG"
+value_type = "string"
+value_name = "ARG"
+required = false
+repeatable = true
+aliases = []
+conflicts_with = []
+normalized_key = "args"
+
+[nix_develop]
+flake = "."
+profile = ".nix-develop"
+category = "governance"
+description = "刷新并验证 Codex fork 的 Nix 开发环境"
+doc_target = "command:co-nix-develop"
+tags = ["governance", "nix-develop"]
+command_path = ["nix-develop"]
