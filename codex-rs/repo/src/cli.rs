@@ -22,6 +22,7 @@ pub(crate) fn command() -> Command {
         .subcommand(Command::new("promote").arg(Arg::new("candidate").required(true)))
         .subcommand(Command::new("test"))
         .subcommand(Command::new("build").arg(cores()))
+        .subcommand(Command::new("sync"))
         .subcommand(Command::new("test-host").arg(ni_repo()))
         .subcommand(Command::new("publish").arg(dry_run()))
         .subcommand(

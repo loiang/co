@@ -177,6 +177,7 @@ fn help_and_invalid_arguments_do_not_start_backend() {
         vec!["install"],
         vec!["build", "--cores", "-1"],
         vec!["build", "--cores", "invalid"],
+        vec!["sync", "--unexpected"],
         vec!["test", "--repo", "."],
     ] {
         let output = command(&root).args(args).output().unwrap();
@@ -201,4 +202,20 @@ fn reports_repository_and_interpreter_failures() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn sync_is_handled_locally_and_requires_a_repository() {
+    let outside = tempfile::tempdir().unwrap();
+    let output = Command::new(cargo_bin("co").unwrap())
+        .arg("sync")
+        .current_dir(outside.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("co sync:")
+    );
 }
