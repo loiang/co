@@ -1,4 +1,4 @@
-"""Thin command-line boundary for repository-owned ``just co-*`` recipes.
+"""Thin command-line boundary for repository-owned Niko capabilities.
 
 Argument parsing stays separate from lifecycle modules so behavior tests can
 exercise real temporary Git repositories without mocking command dispatch.
@@ -130,7 +130,7 @@ def main() -> int:
     """Execute one lifecycle command and preserve actionable failure text.
 
     Returns:
-        Process exit status suitable for ``just``.
+        Process exit status suitable for Niko's argv transport.
     """
     try:
         print(_execute(_parser().parse_args()))

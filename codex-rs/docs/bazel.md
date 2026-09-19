@@ -22,14 +22,14 @@ As of 6/1/2026, this setup is still experimental as we stabilize it.
 
 ## Running Bazel locally
 
-The repository root `justfile` exposes the common Bazel entry points:
+Run common Bazel entry points from the repository root:
 
 ```bash
-just bazel-test
-just bazel-clippy
+bazel test --test_tag_filters=-argument-comment-lint //... --keep_going
+bazel build --config=clippy -- $(scripts/list-bazel-clippy-targets.sh)
 ```
 
-Ordinary local `bazel` and `just` invocations run locally. BuildBuddy cache,
+Ordinary local `bazel` invocations run locally. BuildBuddy cache,
 build event upload, downloads, and remote execution are opt-in configurations.
 
 ## BuildBuddy
@@ -141,16 +141,16 @@ When you add or change Rust dependencies, update the Cargo.toml/Cargo.lock as no
 Then refresh the Bzlmod lockfile from the repo root:
 
 ```bash
-just bazel-lock-update
+bazel mod deps --lockfile_mode=update
 ```
 
-This runs `bazel mod deps --lockfile_mode=update` and updates `MODULE.bazel.lock` if needed.
-Commit the lockfile changes along with your Cargo lockfile update.
+This updates `MODULE.bazel.lock` if needed. Commit the lockfile changes along
+with your Cargo lockfile update.
 
 To verify lockfile alignment locally (the same check CI runs), use:
 
 ```bash
-just bazel-lock-check
+./scripts/check-module-bazel-lock.sh
 ```
 
 In some cases, an upstream crate may need a patch or a `crate.annotation` in `../MODULE.bzl`

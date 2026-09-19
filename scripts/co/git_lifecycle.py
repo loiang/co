@@ -7,6 +7,7 @@ in a new worktree and merges upstream history, preserving customization commits.
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -127,9 +128,10 @@ def _merge_upstream(
     detail = (result.stderr or result.stdout or "").strip()
     quoted_worktree = shlex.quote(str(candidate.root))
     quoted_target = shlex.quote(candidate.upstream_rev)
+    candidate_cli = shlex.quote(str(candidate.root / "scripts/co/cli.py"))
     command = (
         f"GIT_EDITOR=true git -C {quoted_worktree} merge --continue\n"
-        f"just --justfile {quoted_worktree}/justfile co-upgrade-finalize "
+        f"python3 {candidate_cli} upgrade-finalize --repo {quoted_worktree} "
         f"--upstream-rev {quoted_target} "
         f"--ni-repo {shlex.quote(str(ni_repository.resolve()))} "
         f"--cores {build_cores}"
@@ -249,7 +251,7 @@ def validate_candidate(
     ni_repository: Path = Path("/repo/ni"),
     build_cores: int = 0,
 ) -> None:
-    """Run the public test and build recipes for a finalized candidate.
+    """Run the candidate checkout's lifecycle CLI without registry lookup.
 
     Args:
         candidate: Candidate whose tracked baseline update is committed.
@@ -258,34 +260,37 @@ def validate_candidate(
     """
     if build_cores < 0:
         raise LifecycleError("Nix cores 必须是非负整数")
-    justfile = candidate.root / "justfile"
+    root = require_repo(candidate.root)
+    cli = str(root / "scripts/co/cli.py")
     run(
-        ["just", "--justfile", str(justfile), "co-test"],
-        cwd=candidate.root,
+        [sys.executable, cli, "test", "--repo", str(root)],
+        cwd=root,
         capture=False,
     )
     run(
         [
-            "just",
-            "--justfile",
-            str(justfile),
-            "co-build",
+            sys.executable,
+            cli,
+            "build",
+            "--repo",
+            str(root),
             "--cores",
             str(build_cores),
         ],
-        cwd=candidate.root,
+        cwd=root,
         capture=False,
     )
     run(
         [
-            "just",
-            "--justfile",
-            str(justfile),
-            "co-test-host",
+            sys.executable,
+            cli,
+            "test-host",
+            "--repo",
+            str(root),
             "--ni-repo",
             str(ni_repository),
         ],
-        cwd=candidate.root,
+        cwd=root,
         capture=False,
     )
 

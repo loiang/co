@@ -10,7 +10,7 @@ _repo_root = os.environ.get("CODEX_REPO_ROOT")
 if _repo_root is None:
     raise RuntimeError(
         "CODEX_REPO_ROOT must point to the repository root; "
-        "run `just assemble-codex-package` to set it automatically"
+        "set it before running scripts/build_codex_package.py"
     )
 REPO_ROOT = Path(_repo_root)
 

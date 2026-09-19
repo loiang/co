@@ -95,7 +95,7 @@ fn experimental_precomputed_exports_match_generated() -> Result<()> {
 }
 
 #[test]
-#[ignore = "invoked by `just write-app-server-schema`"]
+#[ignore = "invoked by `app-server-protocol/scripts/write_schema_fixtures.py`"]
 fn write_schema_fixtures_from_env() -> Result<()> {
     let schema_root = std::env::var_os("CODEX_APP_SERVER_SCHEMA_ROOT")
         .map(PathBuf::from)
@@ -180,7 +180,7 @@ fn assert_schema_trees_match(
 
         panic!(
             "Vendored {label} app-server schema fixture file set doesn't match freshly generated output. \
-Run `just write-app-server-schema` to overwrite with your changes.\n\n{diff}"
+Run `python3 app-server-protocol/scripts/write_schema_fixtures.py` to overwrite with your changes.\n\n{diff}"
         );
     }
 
@@ -201,7 +201,7 @@ Run `just write-app-server-schema` to overwrite with your changes.\n\n{diff}"
             .to_string();
         panic!(
             "Vendored {label} app-server schema fixture {} differs from generated output. \
-Run `just write-app-server-schema` to overwrite with your changes.\n\n{diff}",
+Run `python3 app-server-protocol/scripts/write_schema_fixtures.py` to overwrite with your changes.\n\n{diff}",
             path.display()
         );
     }

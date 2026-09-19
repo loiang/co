@@ -90,7 +90,7 @@ rustup toolchain install nightly-2025-09-18 \
 
 The checked-in DotSlash file lives at `tools/argument-comment-lint/argument-comment-lint`.
 `run-prebuilt-linter.py` resolves that file via `dotslash` and is the path used by
-targeted package runs such as `just argument-comment-lint -p codex-core`.
+targeted package runs such as `./tools/argument-comment-lint/run-prebuilt-linter.py -p codex-core`.
 Repo-wide runs now go through a native Bazel aspect that invokes a custom
 `rustc_driver` and reuses Bazel-managed Rust dependency metadata instead of
 spawning `cargo dylint` once per crate. The source-build path remains available
@@ -133,16 +133,13 @@ If you are changing the lint crate itself, use the source-build wrapper:
 Run the lint against `codex-rs` from the repo root:
 
 ```bash
-just argument-comment-lint
 bazel build --config=argument-comment-lint -- \
   $(./tools/argument-comment-lint/list-bazel-targets.sh)
 ./tools/argument-comment-lint/run-prebuilt-linter.py -p codex-core
-just argument-comment-lint -p codex-core
 ```
 
-If no package selection is provided, `just argument-comment-lint` now defaults
-to the Bazel aspect path over `//codex-rs/...`. The Python wrappers remain the
-package-scoped escape hatch and still default the underlying Cargo invocation
+The Bazel aspect path covers `//codex-rs/...`. The Python wrappers remain the
+package-scoped escape hatch and default the underlying Cargo invocation
 to `--all-targets` unless you explicitly narrow the target set, so targeted
 wrapper runs cover test-only call sites by default. The Bazel entrypoints use
 `tools/argument-comment-lint/list-bazel-targets.sh` to add the internal

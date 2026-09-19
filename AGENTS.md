@@ -4,7 +4,7 @@ In the codex-rs folder where the rust code lives:
 
 - Crate names are prefixed with `codex-`. For example, the `core` folder's crate is named `codex-core`
 - When using format! and you can inline variables into {}, always do that.
-- Install any commands the repo relies on (for example `just`, `rg`, or `cargo-insta`) if they aren't already available before running instructions here.
+- Install any commands the repo relies on (for example `cargo-nextest`, `rg`, or `cargo-insta`) if they aren't already available before running instructions here.
 - Never add or modify any code related to `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` or `CODEX_SANDBOX_ENV_VAR`.
   - You operate in a sandbox where `CODEX_SANDBOX_NETWORK_DISABLED=1` will be set whenever you use the `shell` tool. Any existing code that uses `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` was authored with this fact in mind. It is often used to early exit out of tests that the author knew you would not be able to run given your sandbox limitations.
   - Similarly, when you spawn a process using Seatbelt (`/usr/bin/sandbox-exec`), `CODEX_SANDBOX=seatbelt` will be set on the child process. Integration tests that want to run Seatbelt themselves cannot be run under Seatbelt, so checks for `CODEX_SANDBOX=seatbelt` are also often used to early exit out of tests, as appropriate.
@@ -17,7 +17,7 @@ In the codex-rs folder where the rust code lives:
   - A method's sole non-self argument is exempt when the method and parameter names match, such as `.enabled(false)` for `fn enabled(&self, enabled: bool)`.
   - Do not add these comments for string or char literals unless the comment adds real clarity; those literals are intentionally exempt from the lint.
   - The parameter name in the comment must exactly match the callee signature.
-  - You can run `just argument-comment-lint` to run the lint check locally. This is powered by Bazel, so running it the first time can be slow if Bazel is not warmed up, though incremental invocations should take <15s. Most of the time, it is best to update the PR and let CI take responsibility for checking this (or run it asynchronously in the background after submitting the PR). Note CI checks all three platforms, which the local run does not.
+  - You can run `bazel build --config=argument-comment-lint -- $(tools/argument-comment-lint/list-bazel-targets.sh)` from the repository root to run the lint check locally. This is powered by Bazel, so running it the first time can be slow if Bazel is not warmed up, though incremental invocations should take <15s. Most of the time, it is best to update the PR and let CI take responsibility for checking this (or run it asynchronously in the background after submitting the PR). Note CI checks all three platforms, which the local run does not.
 - When possible, make `match` statements exhaustive and avoid wildcard arms.
 - Newly added traits should include doc comments that explain their role and how implementations are expected to use them.
 - Discourage both `#[async_trait]` and `#[allow(async_fn_in_trait)]` in Rust traits.
@@ -31,10 +31,10 @@ In the codex-rs folder where the rust code lives:
 - Do not add negative tests for logic that was removed.
 - Do not add general product or user-facing documentation to the `docs/` folder. The official Codex documentation lives elsewhere. The exception is app-server API documentation, which is covered by the app-server guidance below.
 - Prefer private modules and explicitly exported public crate API.
-- If you change `ConfigToml` or nested config types, run `just write-config-schema` to update `codex-rs/core/config.schema.json`.
+- If you change `ConfigToml` or nested config types, run `cargo run -p codex-config-schema --bin codex-write-config-schema` from `codex-rs` to update `codex-rs/core/config.schema.json`.
 - When working with MCP tool calls, prefer using `codex-rs/codex-mcp/src/mcp_connection_manager.rs` to handle mutation of tools and tool calls. Aim to minimize the footprint of changes and leverage existing abstractions rather than plumbing code through multiple levels of function calls.
 - Do not call `reset_client_session` unnecessarily; let the incremental check logic decide whether to reuse the previous request.
-- If you change Rust dependencies (`Cargo.toml` or `Cargo.lock`), run `just bazel-lock-update` from the
+- If you change Rust dependencies (`Cargo.toml` or `Cargo.lock`), run `bazel mod deps --lockfile_mode=update` from the
   repo root to refresh `MODULE.bazel.lock`, and include that lockfile update in the same change. CI
   verifies lockfile drift.
 - Bazel does not automatically make source-tree files available to compile-time Rust file access. If
@@ -59,15 +59,15 @@ In the codex-rs folder where the rust code lives:
     the new implementation so the invariants stay close to the code that owns them.
   - Avoid adding new standalone methods to `codex-rs/tui/src/chatwidget.rs` unless the change is
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
-- When running Rust commands (e.g. `just fix` or `just test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
+- When running Rust commands (for example `cargo clippy` or `cargo nextest`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 
-Run `just fmt` (in the `codex-rs` directory) automatically after you have finished making code changes anywhere in this repository; do not ask for approval to run it. Additionally, run the tests:
+Run `python3 scripts/format.py` from the repository root automatically after you have finished making code changes anywhere in this repository; do not ask for approval to run it. Additionally, run the tests:
 
-1. Do not run `cargo test` directly. Use `just test` so test execution follows the repo defaults.
-2. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `just test -p codex-tui`.
-3. Once those pass, if any changes were made in common, core, or protocol, run the complete test suite with `just test`. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage. project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.
+1. Do not run `cargo test` directly. Use `RUST_MIN_STACK=8388608 NEXTEST_PROFILE=local cargo nextest run --no-fail-fast` from `codex-rs` so test execution follows the repo defaults.
+2. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, append `-p codex-tui` to the nextest command.
+3. Once those pass, if any changes were made in common, core, or protocol, run the complete nextest command. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage. Project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.
 
-Before finalizing a large change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Do not re-run tests after running `fix` or `fmt`.
+Before finalizing a large change to `codex-rs`, run `cargo clippy --fix --tests --allow-dirty -p <project>` from `codex-rs` to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace-wide Clippy builds; omit `-p` only if you changed shared crates. Do not re-run tests after running Clippy fix or formatting.
 
 ## The `codex-core` crate
 
@@ -189,7 +189,7 @@ is easy to review and future diffs stay visual.
 When UI or text output changes intentionally, update the snapshots as follows:
 
 - Run tests to generate any updated snapshots:
-  - `just test -p codex-tui`
+  - `RUST_MIN_STACK=8388608 NEXTEST_PROFILE=local cargo nextest run --no-fail-fast -p codex-tui`
 - Check what’s pending:
   - `cargo insta pending-snapshots -p codex-tui`
 - Review changes by reading the generated `*.snap.new` files directly in the repo, or preview a specific file:
@@ -203,9 +203,9 @@ If you don’t have the tool:
 
 ### Benchmarks
 
-cargo benchmarks can be run with `just bench`, use the divan crate to write new ones.
+cargo benchmarks can be run with `cargo bench --workspace --bench '*'`, use the divan crate to write new ones.
 
-Use `just bench-smoke` to dry-run the benchmark for a single iteration to ensure it works.
+Use `cargo bench --workspace --bench '*' -- --test` to dry-run the benchmark for a single iteration to ensure it works.
 
 ### Test assertions
 
@@ -297,9 +297,9 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 ### Development Workflow
 
 - Regenerate schema fixtures when API shapes change:
-  `just write-app-server-schema`
-  (and `just write-app-server-schema --experimental` when experimental API fixtures are affected).
-- Validate with `just test -p codex-app-server-protocol`.
+  `python3 app-server-protocol/scripts/write_schema_fixtures.py`
+  (and append `--experimental` when experimental API fixtures are affected).
+- Validate with `RUST_MIN_STACK=8388608 NEXTEST_PROFILE=local cargo nextest run --no-fail-fast -p codex-app-server-protocol`.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.
 

@@ -94,7 +94,7 @@ the profile's persistent config.
 
 `plugin-analytics-mutation-smoke` is a manually invoked live smoke test. It
 contacts the configured remote plugin API and temporarily changes the active
-account's installed-plugin state. It is not run by `cargo test`, `just test`,
+account's installed-plugin state. It is not run by `cargo test`, `cargo nextest`,
 or CI.
 
 Choose a remote plugin that is available to the active account and is not

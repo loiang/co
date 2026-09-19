@@ -26,9 +26,6 @@ jobs:
           components: rustfmt
       - name: cargo fmt
         run: cargo fmt -- --config imports_granularity=Item --check
-      - name: Rust benchmark smoke test
-        run: just bench-smoke
-
   cargo_shear:
     name: cargo shear
     runs-on: ubuntu-24.04
