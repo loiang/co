@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -87,6 +88,57 @@ class SourceBinariesForTargetTest(unittest.TestCase):
             ),
             ["codex-code-mode-host"],
         )
+
+    def test_source_build_groups_required_binaries_and_locks_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "x86_64-unknown-linux-musl" / "release"
+            output.mkdir(parents=True)
+            for name in ("codex", "codex-code-mode-host", "bwrap"):
+                touch_file(output / name)
+            with (
+                patch("codex_package.cargo.cargo_target_dir", return_value=root),
+                patch(
+                    "codex_package.cargo.resolve_codex_v8_cargo_env", return_value={}
+                ),
+                patch("codex_package.cargo.subprocess.run") as run,
+            ):
+                outputs = build_source_binaries(
+                    TARGET_SPECS["x86_64-unknown-linux-musl"],
+                    PACKAGE_VARIANTS["codex"],
+                    cargo="cargo",
+                    profile="release",
+                    entrypoint_bin=None,
+                    code_mode_host_bin=None,
+                    bwrap_bin=None,
+                    codex_command_runner_bin=None,
+                    codex_windows_sandbox_setup_bin=None,
+                )
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(
+                run.call_args.args[0],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "--profile",
+                    "release",
+                    "--bin",
+                    "codex",
+                    "--bin",
+                    "codex-code-mode-host",
+                    "--bin",
+                    "bwrap",
+                ],
+            )
+            self.assertTrue(run.call_args.kwargs["check"])
+            self.assertEqual(outputs.entrypoint_bin, output / "codex")
+            self.assertEqual(
+                outputs.code_mode_host_bin, output / "codex-code-mode-host"
+            )
+            self.assertEqual(outputs.bwrap_bin, output / "bwrap")
 
     def test_build_uses_prebuilt_windows_helpers_without_running_cargo(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

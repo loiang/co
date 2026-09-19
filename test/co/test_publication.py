@@ -11,8 +11,8 @@ import pytest
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "co"))
 
-from common import LifecycleError  # noqa: E402
-from publication import (  # noqa: E402
+from common import LifecycleError
+from publication import (
     _ensure_local_tag,
     _push_refs,
     _require_main_fast_forward,
@@ -243,3 +243,30 @@ def test_atomic_push_rejects_concurrent_remote_main(tmp_path: Path) -> None:
         ).returncode
         != 0
     )
+
+
+def test_retry_rejects_changed_local_asset_before_remote_mutation(
+    tmp_path: Path,
+) -> None:
+    root, _, _ = _repository(tmp_path)
+    asset = root / ".states/co/build/asset"
+    asset.parent.mkdir(parents=True)
+    asset.write_text("first", encoding="utf-8")
+    with (
+        patch("publication.require_release_records", return_value=(asset,)),
+        patch("publication._require_origin"),
+        patch("publication.ensure_release", side_effect=RuntimeError("network")),
+        pytest.raises(LifecycleError, match="可重试"),
+    ):
+        publish(root)
+    asset.write_text("other", encoding="utf-8")
+    with (
+        patch("publication.require_release_records", return_value=(asset,)),
+        patch("publication._require_origin"),
+        patch("publication._push_refs") as push,
+        patch("publication.ensure_release") as release,
+        pytest.raises(LifecycleError, match="digest 不一致"),
+    ):
+        publish(root)
+    push.assert_not_called()
+    release.assert_not_called()

@@ -41,7 +41,16 @@ def _write(root: Path, relative: str, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _repositories(tmp_path: Path) -> tuple[Path, Path, str]:
+def _write_bytes(root: Path, relative: str, content: bytes) -> None:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+
+
+def _repositories(
+    tmp_path: Path,
+    codex_toml: bytes | None = None,
+) -> tuple[Path, Path, str]:
     upstream = tmp_path / "upstream"
     subprocess.run(["git", "init", "-b", "main", str(upstream)], check=True)
     _git(upstream, "config", "user.name", "Co Test")
@@ -49,6 +58,8 @@ def _repositories(tmp_path: Path) -> tuple[Path, Path, str]:
     _write(upstream, "shared.txt", "base\n")
     _write(upstream, "codex-rs/Cargo.toml", '[workspace.package]\nversion = "0.0.0"\n')
     _write(upstream, "codex-rs/Cargo.lock", "lock-base\n")
+    if codex_toml is not None:
+        _write_bytes(upstream, "codex.toml", codex_toml)
     baseline = _commit(upstream, "base")
 
     checkout = tmp_path / "co"
@@ -81,6 +92,52 @@ def test_merges_upstream_and_preserves_custom_history(tmp_path: Path) -> None:
     assert len(_git(candidate.root, "show", "-s", "--format=%P", "HEAD").split()) == 2
     _git(candidate.root, "merge-base", "--is-ancestor", custom_head, "HEAD")
     _git(candidate.root, "merge-base", "--is-ancestor", target, "HEAD")
+
+
+def test_merges_upstream_without_changing_real_local_codex_toml(
+    tmp_path: Path,
+) -> None:
+    upstream, checkout, _ = _repositories(tmp_path)
+    local_codex_toml = (ROOT / "codex.toml").read_bytes()
+    _write_bytes(checkout, "codex.toml", local_codex_toml)
+    custom_head = _commit(checkout, "customize codex configuration")
+    _write(upstream, "upstream.txt", "new\n")
+    target = _commit(upstream, "upstream advance outside codex configuration")
+
+    candidate = create_upgrade_candidate(checkout, created_at="20260919T153100Z")
+
+    assert (candidate.root / "codex.toml").read_bytes() == local_codex_toml
+    _git(candidate.root, "merge-base", "--is-ancestor", custom_head, "HEAD")
+    _git(candidate.root, "merge-base", "--is-ancestor", target, "HEAD")
+
+
+def test_rejects_upstream_codex_toml_change_and_preserves_ours_for_recovery(
+    tmp_path: Path,
+) -> None:
+    upstream, checkout, _ = _repositories(tmp_path, b'repo = "/repo/base"\n')
+    local_codex_toml = (ROOT / "codex.toml").read_bytes()
+    _write_bytes(checkout, "codex.toml", local_codex_toml)
+    _commit(checkout, "customize codex configuration")
+    _write_bytes(upstream, "codex.toml", b'repo = "/repo/upstream"\n')
+    _commit(upstream, "upstream changes codex configuration")
+
+    with pytest.raises(CandidateConflict, match="merge --continue"):
+        create_upgrade_candidate(checkout, created_at="20260919T153101Z")
+
+    candidate_prefix = checkout / ".states" / "worktrees" / "20260919T153101Z-"
+    matching = tuple(candidate_prefix.parent.glob(candidate_prefix.name + "*"))
+    assert len(matching) == 1
+    candidate_root = matching[0]
+    assert _git(candidate_root, "rev-parse", "--verify", "MERGE_HEAD")
+    assert (
+        _git(candidate_root, "diff", "--name-only", "--diff-filter=U") == "codex.toml"
+    )
+    ours = subprocess.run(
+        ["git", "-C", str(candidate_root), "show", ":2:codex.toml"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert ours == local_codex_toml
 
 
 def test_same_upstream_sha_is_a_noop(tmp_path: Path) -> None:

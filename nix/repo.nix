@@ -10,7 +10,7 @@
 }:
 
 rustPlatform.buildRustPackage {
-  pname = "repo";
+  pname = "co";
   inherit version;
   src = source;
   cargoDeps = rustPlatform.importCargoLock {
@@ -24,7 +24,7 @@ rustPlatform.buildRustPackage {
     "--package"
     "codex-repo"
     "--bin"
-    "repo"
+    "co"
   ];
   nativeBuildInputs = [ makeWrapper ];
   doCheck = false;
@@ -32,7 +32,7 @@ rustPlatform.buildRustPackage {
   postInstall = ''
     mkdir -p "$out/libexec/repo"
     cp ${backendSource}/*.py "$out/libexec/repo/"
-    wrapProgram "$out/bin/repo" \
+    wrapProgram "$out/bin/co" \
       --set REPO_BACKEND_PATH "$out/libexec/repo/cli.py" \
       --set REPO_PYTHON "${lib.getExe python3}" \
       --prefix PATH : "${lib.makeBinPath [ gitMinimal ]}"
@@ -41,7 +41,7 @@ rustPlatform.buildRustPackage {
   doInstallCheck = true;
   installCheckPhase = ''
     runHook preInstallCheck
-    "$out/bin/repo" --help
+    "$out/bin/co" --help
     ${lib.getExe python3} "$out/libexec/repo/cli.py" --help
     runHook postInstallCheck
   '';
@@ -50,7 +50,7 @@ rustPlatform.buildRustPackage {
     description = "Repository governance CLI with its packaged Python backend";
     homepage = "https://github.com/loiang/co";
     license = lib.licenses.asl20;
-    mainProgram = "repo";
+    mainProgram = "co";
     platforms = lib.platforms.unix;
   };
 }

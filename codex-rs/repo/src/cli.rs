@@ -3,7 +3,7 @@ use clap::ArgAction;
 use clap::Command;
 
 pub(crate) fn command() -> Command {
-    Command::new("repo")
+    Command::new("co")
         .about("Repository lifecycle commands")
         .subcommand_required(true)
         .disable_help_subcommand(true)

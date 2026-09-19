@@ -15,7 +15,7 @@ from common import (
     timestamp,
     write_json,
 )
-from evidence import read_build_record, source_identity
+from evidence import read_build_record, source_identity, verify_build_record
 
 
 def build_official_host(root: Path, ni_repository: Path) -> str:
@@ -58,14 +58,16 @@ def test_host_integration(repository: Path, ni_repository: Path) -> Path:
     resolved_ni = require_repo(ni_repository)
     identity = source_identity(root)
     build_record = read_build_record(root, identity)
+    package = verify_build_record(root, build_record)
     host_store = build_official_host(root, resolved_ni)
     host_binary = Path(host_store) / "bin/codex-code-mode-host"
-    codex_binary = Path(str(build_record["storePath"])) / "bin/codex"
+    codex_binary = package / build_record["package"]["entrypoint"]
     command = test_candidate_binaries(root, codex_binary, host_binary)
     record = {
         "schemaVersion": 1,
         **identity,
         "completedAt": timestamp(),
+        "manifestSha256": build_record["manifestSha256"],
         "officialHostStorePath": host_store,
         "officialHostSha256": sha256(host_binary),
         "officialHostLock": official_host_lock(resolved_ni),

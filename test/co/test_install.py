@@ -11,9 +11,9 @@ import pytest
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "co"))
 
-from common import LifecycleError  # noqa: E402
-from host_integration import build_official_host  # noqa: E402
-from install import (  # noqa: E402
+from common import LifecycleError
+from host_integration import build_official_host
+from install import (
     _update_consumer,
     _verify_codex_lock,
     _verify_source_url,
@@ -262,3 +262,53 @@ def test_update_passes_expected_revision_to_ni(tmp_path: Path) -> None:
         "--release-tag",
         "co-20260912T154829Z-aaaaaaaaaa",
     ]
+
+
+def test_native_host_gate_receives_complete_package_without_static_elf_gate(
+    tmp_path: Path,
+) -> None:
+    from common import sha256
+    from install import _validate_candidate_source
+    from native_fixtures import make_assets
+    from release_asset import Artifact, fetch_release_bundle
+
+    source = "a" * 40
+    assets = make_assets(tmp_path, source, "b" * 40)
+    files = {
+        path.name: Artifact(
+            path.name,
+            "https://release.invalid",
+            path,
+            sha256(path),
+            path.stat().st_size,
+        )
+        for path in assets
+    }
+    with patch(
+        "release_asset._prefetch", side_effect=lambda _root, _tag, name: files[name]
+    ):
+        bundle = fetch_release_bundle(
+            tmp_path, f"co-20260919T000000Z-{source[:10]}", source
+        )
+    host = tmp_path / "host/bin/codex-code-mode-host"
+    host.parent.mkdir(parents=True)
+    host.write_bytes(b"official-host")
+
+    def gate(root: Path, binary: Path, host_binary: Path) -> list[str]:
+        assert root == tmp_path
+        assert binary.parent.name == "bin"
+        assert (binary.parent.parent / "codex-resources/bwrap").is_file()
+        assert host_binary == host
+        return ["validated"]
+
+    with (
+        patch("install.build_official_host", return_value=str(host.parent.parent)),
+        patch("install.test_candidate_binaries", side_effect=gate),
+        patch("install.official_host_lock", return_value={"narHash": "fixed"}),
+        patch("install.head", return_value="c" * 40),
+    ):
+        record = _validate_candidate_source(tmp_path, tmp_path, bundle)
+    evidence = json.loads(record.read_text())
+    assert evidence["release"]["cli"]["binaryPath"] == "bin/codex"
+    assert evidence["release"]["package"]["target"] == "x86_64-unknown-linux-gnu"
+    assert "cliArchiveStorePath" not in evidence

@@ -2,22 +2,23 @@
 
 The installer consumes the published archive only after its Git tag, manifest,
 checksum file, tar shape, and embedded binary all agree with one source commit.
-Nix performs fixed-URL downloads; Python owns the structured validation needed
+Python performs fixed-URL downloads and owns the structured validation needed
 before the consumer repository may enter its compare-and-swap transaction.
 """
 
 import json
+import os
 import re
-import shutil
-import tarfile
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
-from common import LifecycleError, git, run, sha256
+from common import LifecycleError, git, sha256
+from package_verification import package_metadata, verified_package
 
 REPOSITORY = "loiang/co"
 REPOSITORY_URL = "https://github.com/loiang/co.git"
@@ -56,6 +57,7 @@ class ReleaseBundle:
     checksums: Artifact
     binary_sha256: str
     binary_size: int
+    package: dict[str, Any]
 
     def evidence(self) -> dict[str, Any]:
         """Return stable release facts without leaking machine-local paths."""
@@ -75,11 +77,12 @@ class ReleaseBundle:
             "upstreamRev": self.upstream_rev,
             "sourceVersion": self.source_version,
             "platform": self.platform,
+            "package": self.package,
             "manifest": details(self.manifest),
             "checksums": details(self.checksums),
             "cli": {
                 **details(self.cli),
-                "binaryPath": "codex",
+                "binaryPath": self.package["entrypoint"],
                 "binarySha256": self.binary_sha256,
                 "binarySize": self.binary_size,
             },
@@ -139,18 +142,33 @@ def _asset_url(tag: str, name: str) -> str:
 
 def _prefetch(root: Path, tag: str, name: str) -> Artifact:
     url = _asset_url(tag, name)
-    result = run(
-        ["nix", "store", "prefetch-file", "--json", url],
-        cwd=root,
+    directory = root / ".states/co/downloads" / tag
+    directory.mkdir(parents=True, exist_ok=True)
+    limits = {"SHA256SUMS": MAX_CHECKSUM_SIZE}
+    limit = limits.get(
+        name, MAX_MANIFEST_SIZE if name.endswith(".json") else MAX_BINARY_SIZE * 4
     )
     try:
-        payload = json.loads(result.stdout or "")
-        path = Path(payload["storePath"])
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
-        raise LifecycleError(f"Nix prefetch 未返回有效 store path: {name}") from error
-    if not path.is_file():
-        raise LifecycleError(f"release asset 不是 regular file: {name}")
-    return Artifact(name, url, path, sha256(path), path.stat().st_size)
+        with tempfile.NamedTemporaryFile(dir=directory, delete=False) as output:
+            temporary = Path(output.name)
+            with urlopen(url, timeout=60) as response:
+                size = 0
+                while block := response.read(1024 * 1024):
+                    size += len(block)
+                    if size > limit:
+                        raise LifecycleError(f"release asset 超过安全大小限制: {name}")
+                    output.write(block)
+            output.flush()
+            os.fsync(output.fileno())
+        digest = sha256(temporary)
+        path = directory / f"{digest}-{name}"
+        temporary.replace(path)
+    except OSError as error:
+        raise LifecycleError(f"release asset 下载失败: {name}") from error
+    finally:
+        if "temporary" in locals():
+            temporary.unlink(missing_ok=True)
+    return Artifact(name, url, path, digest, size)
 
 
 def _parse_checksums(path: Path, expected_names: set[str]) -> dict[str, str]:
@@ -181,15 +199,20 @@ def _load_manifest(path: Path) -> dict[str, Any]:
 
 
 def _manifest_identity(
-    payload: dict[str, Any], source_rev: str, archive_name: str
+    payload: dict[str, Any],
+    source_rev: str,
+    archive_name: str,
+    platform: str = PLATFORM,
 ) -> tuple[str, str, str]:
     checksums = payload.get("checksums")
-    expected_keys = {"codex", archive_name}
+    metadata = package_metadata(payload)
+    entrypoint = metadata["entrypoint"]
+    expected_keys = {entrypoint, archive_name}
     valid = (
-        payload.get("schemaVersion") == 1
+        payload.get("schemaVersion") == 2
         and payload.get("repository") == REPOSITORY
         and payload.get("sourceRev") == source_rev
-        and payload.get("platform") == PLATFORM
+        and payload.get("platform") == platform
         and SHA_RE.fullmatch(str(payload.get("upstreamRev", ""))) is not None
         and isinstance(payload.get("sourceVersion"), str)
         and bool(payload.get("sourceVersion"))
@@ -202,7 +225,7 @@ def _manifest_identity(
     return (
         str(payload["upstreamRev"]),
         str(payload["sourceVersion"]),
-        str(checksums["codex"]),
+        str(checksums[entrypoint]),
     )
 
 
@@ -210,7 +233,7 @@ def fetch_release_bundle(root: Path, tag: str, source_rev: str) -> ReleaseBundle
     """Download and cross-check all producer evidence for one CLI release.
 
     Args:
-        root: Checkout used as the explicit Nix command directory.
+        root: Checkout owning the verified download cache.
         tag: Exact published release tag.
         source_rev: Expected peeled Git commit for that tag.
 
@@ -222,6 +245,8 @@ def fetch_release_bundle(root: Path, tag: str, source_rev: str) -> ReleaseBundle
     """
     if TAG_RE.fullmatch(tag) is None or SHA_RE.fullmatch(source_rev) is None:
         raise LifecycleError("release tag 或 source SHA 格式无效")
+    if not tag.endswith(f"-{source_rev[:10]}"):
+        raise LifecycleError("release tag 与 source SHA 不一致")
     short_rev = source_rev[:10]
     archive_name = f"co-cli-{PLATFORM}-{short_rev}.tar.gz"
     manifest_name = f"co-manifest-{short_rev}.json"
@@ -238,7 +263,9 @@ def fetch_release_bundle(root: Path, tag: str, source_rev: str) -> ReleaseBundle
     archive_sha = str(payload["checksums"][archive_name])
     if cli.sha256 != expected[archive_name] or cli.sha256 != archive_sha:
         raise LifecycleError("CLI archive SHA-256 在 manifest/SHA256SUMS 间不一致")
-    binary_size = _archive_binary_size(cli.path)
+    metadata = package_metadata(payload)
+    with verified_package(cli.path, metadata, binary_sha) as directory:
+        binary_size = (directory / metadata["entrypoint"]).stat().st_size
     return ReleaseBundle(
         tag,
         source_rev,
@@ -250,56 +277,19 @@ def fetch_release_bundle(root: Path, tag: str, source_rev: str) -> ReleaseBundle
         sums,
         binary_sha,
         binary_size,
+        metadata,
     )
-
-
-def _archive_member(archive: tarfile.TarFile) -> tarfile.TarInfo:
-    members = archive.getmembers()
-    if (
-        len(members) != 1
-        or members[0].name != "codex"
-        or not members[0].isreg()
-        or not 0 < members[0].size <= MAX_BINARY_SIZE
-    ):
-        raise LifecycleError("CLI archive 必须只含安全路径下的单一 regular codex")
-    return members[0]
-
-
-def _archive_binary_size(archive_path: Path) -> int:
-    try:
-        with tarfile.open(archive_path, mode="r:gz") as archive:
-            return _archive_member(archive).size
-    except (OSError, tarfile.TarError) as error:
-        raise LifecycleError("CLI archive 无法安全读取") from error
 
 
 @contextmanager
 def verified_cli(bundle: ReleaseBundle) -> Iterator[Path]:
-    """Materialize the one verified binary for a bounded compatibility test.
-
-    Args:
-        bundle: Cross-checked release metadata and archive.
-
-    Yields:
-        Temporary executable path removed after the caller's host gate.
-
-    Raises:
-        LifecycleError: Tar shape, decompression, or binary digest is invalid.
-    """
-    try:
-        with tempfile.TemporaryDirectory(prefix="co-release-") as directory:
-            target = Path(directory) / "codex"
-            with tarfile.open(bundle.cli.path, mode="r:gz") as archive:
-                source = archive.extractfile(_archive_member(archive))
-                if source is None:
-                    raise LifecycleError("CLI archive regular member 无法读取")
-                with source, target.open("wb") as output:
-                    shutil.copyfileobj(source, output, length=1024 * 1024)
-            target.chmod(0o755)
-            if target.stat().st_size != bundle.binary_size:
-                raise LifecycleError("CLI binary size 与 archive metadata 不一致")
-            if sha256(target) != bundle.binary_sha256:
-                raise LifecycleError("CLI binary SHA-256 与 manifest 不一致")
-            yield target
-    except (OSError, tarfile.TarError) as error:
-        raise LifecycleError("CLI archive 解包验证失败") from error
+    """Materialize the verified entrypoint alongside all required package resources."""
+    if sha256(bundle.cli.path) != bundle.cli.sha256:
+        raise LifecycleError("CLI archive SHA-256 在下载后发生变化")
+    with verified_package(
+        bundle.cli.path, bundle.package, bundle.binary_sha256
+    ) as directory:
+        binary = directory / bundle.package["entrypoint"]
+        if binary.stat().st_size != bundle.binary_size:
+            raise LifecycleError("CLI binary size 与 archive metadata 不一致")
+        yield binary
