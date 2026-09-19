@@ -1,0 +1,14 @@
+### Why
+
+OpenAI 的官方 bwrap tarball 使用 target-qualified member name，首版 resolver 错误地只接受裸 `bwrap`，导致真实 `co build` 在已通过 asset digest 后仍被安全解包门禁拒绝。
+
+### Goal
+
+严格接受与已验证 release asset 对应的官方 member name，同时继续拒绝裸名、路径穿越、非 executable 与多成员 archive。
+
+### Accomplished
+
+- 从 `asset.name` 精确移除 `.tar.gz` 得到唯一允许的 member name。
+- fixture 对齐官方 `bwrap-<target>` 命名。
+- 新增官方命名成功和裸 `bwrap` 拒绝回归。
+- 定向测试 75 项通过，ruff 与 `git diff --check` 通过。
