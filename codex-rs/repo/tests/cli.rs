@@ -35,7 +35,7 @@ sys.exit(int(os.environ.get("FIXTURE_EXIT", "0")))
 }
 
 fn command(root: &TempDir) -> Command {
-    let mut command = Command::new(cargo_bin("repo").unwrap());
+    let mut command = Command::new(cargo_bin("co").unwrap());
     command.current_dir(root.path().join("nested"));
     command
         .env_remove("REPO_BACKEND_PATH")
@@ -48,7 +48,7 @@ fn command(root: &TempDir) -> Command {
 }
 
 #[test]
-fn forwards_all_commands_from_repository_root() {
+fn forwards_lifecycle_commands_from_a_nested_repository_directory() {
     let root = fixture();
     let cases = [
         vec!["upgrade"],
@@ -188,7 +188,7 @@ fn help_and_invalid_arguments_do_not_start_backend() {
 #[test]
 fn reports_repository_and_interpreter_failures() {
     let outside = tempfile::tempdir().unwrap();
-    let output = Command::new(cargo_bin("repo").unwrap())
+    let output = Command::new(cargo_bin("co").unwrap())
         .arg("test")
         .current_dir(outside.path())
         .output()

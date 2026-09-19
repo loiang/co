@@ -1,0 +1,67 @@
+# `co` custom patch ledger
+
+本页只记录相对 `upstream/main` 的本地自定义功能。每项同时给出 commit、用户可见行为，以及当前源码中的保护和测试路径。比较基线为 `upstream/main` 的 `78245b47af2a7aafcabe025828ceecca69db4df1`；该基线本身不属于本地 patch。
+
+## 001e804c0b — source-built customized CLI lifecycle
+
+- **Commit**：`001e804c0bc429b9a9a5d5dec046a797ee3cb1c8`
+- **用户可见行为**：建立从本地自定义源码构建 CLI 的完整生命周期。`co` 负责固定 upstream/source identity，执行 candidate upgrade、测试、静态 CLI build、host integration、publish 和 install，并输出可复核的状态记录；构建产物只包含 CLI 与运行时 helper。该提交还引入了本地 `archive-except` 能力的初始状态规划，以及 host skills 启动时清理 `CODEX_HOME/skills/.system` 的行为，使 bundled system skills 不会被加载。
+- **保护 / 测试路径**：源码与 lock identity 由 `scripts/co/evidence.py`、`scripts/co/git_lifecycle.py` 和 `.co/upstream-rev` 绑定；静态构建与生命周期回归位于 `test/co/`。archive 图规划在 `codex-rs/state/src/runtime/archive_except.rs`，skills 清理在 `codex-rs/skills/src/lib.rs` 与 `codex-rs/ext/skills/src/host_service.rs`；对应测试为 `codex-rs/state/src/runtime/archive_except_tests.rs`、`codex-rs/ext/skills/src/host_service_tests.rs` 的 `bundled_skills_are_removed_and_never_loaded`。
+
+## 079ffd907f — 将自定义构建同步到官方稳定 release
+
+- **Commit**：`079ffd907fae8eb26393c130c3480d10a6f81713`
+- **用户可见行为**：每次 `co build` 先解析官方 GitHub latest stable `rust-v<semver>`，把版本作为固定的 Nix input 写入构建，并同时 patch `Cargo.toml`、`Cargo.lock`；构建完成后要求静态 CLI 的 `--version` 与该版本完全一致。
+- **保护 / 测试路径**：`scripts/co/build.py:_official_version` 拒绝 draft、prerelease、非 `rust-v<semver>` 或过大的 metadata；`nix/codex-cli.nix` 对 manifest/lock 同步替换，并在 install check 中验证 static linkage、无 interpreter/动态依赖及 `--version`。`test/co/test_build.py` 覆盖 stable release 解析、非法 release 拒绝、固定 Git version input、单一 store path 和静态 host 输出。
+
+## a831436c70 — 只消费经过验证的 CLI release asset
+
+- **Commit**：`a831436c70c6afb072b7710d4c864299990ff0f9`
+- **用户可见行为**：安装流程消费精确发布的 CLI archive，而不是重新推断或接受任意资产。它先解析 source commit 对应的唯一 release tag，再校验 manifest、`SHA256SUMS`、tar 内容和嵌入的 `codex` binary；通过验证后才进入 ni 的 consumer lock 更新，并把 `--release-tag` 与 `--expected-rev` 一并传入 CAS 更新。
+- **保护 / 测试路径**：`scripts/co/release_asset.py` 固定 `loiang/co`、tag/source SHA、platform、manifest checksum、archive checksum、tar 单一 regular `codex` 成员和 binary digest；`scripts/co/install.py` 在 `_update_consumer` 后回读 source URL/lock，并确保 official host lock 未变化。`test/co/test_release_asset.py` 覆盖 manifest/checksum/path/link/extra-member/binary digest/tag 失败闭环；`test/co/test_install.py` 覆盖 exact tag+source、dry-run 无 mutation、candidate gate 在 ni update 前执行，以及 `--release-tag`/`--expected-rev` 传递。
+
+## 1629b858b5 — 发布重试记录的完成态归档
+
+- **Commit**：`1629b858b59f45a71b02296b8f6a848b07f66a21`
+- **用户可见行为**：新 source commit 开始发布时，已 `released` 且属于旧 source 的 pending retry record 会按 immutable tag 移到 `.states/co/publish/completed/`；未完成的旧 source retry 仍阻断发布；同一 source 的已发布重试继续复用原 tag；`--dry-run` 不落盘归档。
+- **保护 / 测试路径**：`scripts/co/publication.py:_archive_released_pending` 校验 source SHA、tag 后缀、assets 形状及归档内容冲突，`_pending` 只允许同 source 继续；远端 main fast-forward、tag 不覆盖和 atomic refs push 保护发布边界。`test/co/test_publication.py` 的 `test_two_source_commits_publish_and_archive_completed_retry_record`、`test_unfinished_prior_source_record_blocks_new_publish`、`test_dry_run_does_not_archive_completed_prior_source`、`test_released_same_source_retry_keeps_tag` 以及并发 remote main 测试覆盖这些路径。
+
+## 683bf7e237 — 将 archive helper 迁移到 native `archive-except`
+
+- **Commit**：`683bf7e2378d8655b7f7b61998d760ef0d387f2b`
+- **用户可见行为**：移除独立 Python archive helper 及其 packaging，将 archive group 选择和执行保护迁移到 Rust state planner 与 TUI。`/archive-except` 现在可做跨 project/working directory 的全局规划，支持 preview 与 whole-group limit；执行前刷新 loaded threads，并在执行期间保留已确认的 target set。TUI 展示 protected、already archived、limit-skipped 等 group 状态，并要求显式确认。
+- **保护 / 测试路径**：`codex-rs/state/src/runtime/archive_except/{graph,model,planner,subtrees}.rs` 以完整 group 为单位规划，遇到 loaded/pinned/open edge/orphan/missing parent/ambiguous relation/cycle 等条件 fail closed；`codex-rs/tui/src/app/archive_except.rs` 在执行前校验 group membership、relationship 和 loaded 状态，确认集合发生变化即停止。测试位于 `codex-rs/state/src/runtime/archive_except_tests.rs`、`codex-rs/tui/src/app/archive_except_tests.rs`、`codex-rs/tui/src/app/archive_except_loaded_tests.rs`、`codex-rs/tui/src/archive_except_tests.rs` 与 `codex-rs/tui/src/chatwidget/tests/slash_commands.rs`（包括 preview、limit、invalid args、cancel-safe confirmation 和 progress reporting）。提交说明记录了当时验证被中止；以上为当前源码保留的验证入口。
+
+## 64397e2f4b — native `co` repository lifecycle CLI
+
+- **Commit**：`64397e2f4b5ed8d5bca963d85ee1c383b6f562b4`
+- **用户可见行为**：以 Rust `co` binary 作为 repository lifecycle CLI 入口，保留 `upgrade`、`upgrade-finalize`、`promote`、`test`、`build`、`test-host`、`publish` 和 `install` 子命令；从任意 repository 子目录定位 Git root 后，转发到打包的 Python lifecycle backend。stdin、退出码、Unix signal、help/参数错误和 installed backend override 的行为保持可观察且可预测。
+- **保护 / 测试路径**：`codex-rs/repo/src/backend.rs` 只从 Git root 启动 backend，`nix/repo.nix` 将 Python backend、Python 与 `gitMinimal` 包装进 `$out/bin/co`；Rust wrapper 保留 `CO_BACKEND_PATH`/`CO_PYTHON` override，并将 signal 映射为 `128 + signal`。`codex-rs/repo/tests/cli.rs` 覆盖 nested repository directory 下的 lifecycle command forwarding、stdin/失败退出码、signal、installed override、help/非法参数和 repository/interpreter failure；`scripts/co/cli.py` 也以 `co` 作为 parser/error 前缀。
+
+## 76d1a593e4 — 隔离 `co` package 的 Cargo 依赖
+
+- **Commit**：`76d1a593e45ac72dcbcd919520cc9e4ba1020f43`
+- **用户可见行为**：`co` package 的 native build 只取 `codex-rs/repo/src`，使用独立的 `nix/repo-cargo/Cargo.toml` 与 `Cargo.lock`，因此 repository lifecycle CLI 的构建不再被完整 Codex workspace 的依赖锁或源码输入牵连。
+- **保护 / 测试路径**：`flake.nix` 将 `co` source 限定到 repo crate，`nix/repo.nix` 通过 `importCargoLock` 和 `postPatch` 使用独立 manifest/lock；包的 install check 运行 `$out/bin/co --help` 与 Python backend 的 `--help`。相关输入与 lifecycle 输出的回归在 `test/co/test_build.py`、`test/co/test_common.py`、`test/co/test_git_lifecycle.py`，独立锁文件为 `nix/repo-cargo/Cargo.lock`。
+
+## 本次 native lifecycle 变更（待提交）
+
+以下内容来自当前 worktree 的 local-vs-upstream diff，尚未形成最终 commit，因此不填写伪造的 commit hash。
+
+- **Native package builder**：`scripts/co/native_package.py` 通过 `scripts/build_codex_package.py --variant codex` 调用 upstream grouped Cargo builder；host target 由 `rustc --version --verbose` 与 `codex_package.targets.TARGET_SPECS` 解析，构建环境固定 `CODEX_REPO_ROOT`/`PYTHONPATH`，可按单次 `cores` 设置 `CARGO_BUILD_JOBS`，随后调用 upstream `validate_package_dir`。`scripts/co/build.py` 读取官方 stable release version，生成包含 CLI、`codex-code-mode-host`、`bwrap`、ripgrep、zsh 和 `codex-package.json` 的完整 package archive。保护测试为 `test/co/test_build.py` 的 `test_build_uses_official_package_and_emits_bound_assets`、host target 映射、invalid host、failed builder 和 invalid builder output 测试。
+- **Manifest / evidence schema v2**：build manifest 与 `.states/co/build/latest.json` 使用 `schemaVersion: 2`，记录 canonical package metadata、root-relative `packageDir`、`manifestSha256` 和 archive/entrypoint checksums。`scripts/co/evidence.py` 要求 source/upstream/flake lock/dirtiness identity 一致，拒绝绝对或越界路径，并通过 `scripts/co/package_verification.py` 对 archive 做安全成员、大小、类型、官方 layout、metadata、digest、文件字节和 executable mode 的逐项比对；host integration evidence 必须绑定同一 manifest。`test/co/test_evidence.py` 覆盖 tampered package、越界 `packageDir`、manifest mismatch、stale identity、clean-source gate 与 host gate。
+- **Install / publication verification**：`scripts/co/release_asset.py` 按 tag/source short SHA 校验 schema v2 package metadata，下载资产时使用 `.states/co/downloads/<tag>` 的 digest cache 和大小上限，并在 host gate 前通过 `verified_package` 保留完整 package resources；`scripts/co/install.py` 将完整 package entrypoint 与 resources 交给 candidate integration gate。`scripts/co/publication.py` 将 pending record 升级为 schema v2 并记录 `assetSha256`，重试时拒绝本地 asset 被替换。保护测试为 `test/co/test_release_asset.py` 的 authenticated archive、metadata、resource/permission/size、cache 和 cleanup 测试，`test/co/test_install.py::test_native_host_gate_receives_complete_package_without_static_elf_gate`，以及 `test/co/test_publication.py::test_retry_rejects_changed_local_asset_before_remote_mutation`。
+- **易被 upstream merge 覆盖的本地保护点**：`scripts/codex_package/cargo.py` 的 source grouped build 明确加入 `cargo build --locked`，防止构建隐式更新依赖锁；对应回归是 `scripts/codex_package/test_cargo.py::SourceBinariesForTargetTest::test_source_build_groups_required_binaries_and_locks_dependencies`。该行属于本地 native lifecycle 保护，upstream merge 时必须保留。
+
+## 历史行为：已被 native build 生命周期替代
+
+以下两项只保留为历史记录，不作为当前独立自定义功能：
+
+- `af754eac4bd73f3c9d0cc2fc92252595dfdd2eba`（`af754eac4b`）：将单个 Nix derivation 的默认 `--cores` 从 `2` 改为 `0`，保留 `--max-jobs 1`；初始回归在 `test/co/test_build.py`。
+- `8aaeb5e955881902ff624e1b049c4199afea079a`（`8aaeb5e955`）：增加 `build/upgrade/upgrade-finalize --cores` 的单次覆盖，并把冲突 continuation 的 core limit 继续传递；初始回归在 `test/co/test_build.py`、`test/co/test_cli.py` 和 `test/co/test_git_lifecycle.py`。
+
+## 明确排除
+
+- `5ca875c147ceb058d66f6c9b32367a5231d301c7` 是把官方 upstream 合入升级分支的 merge commit，不产生独立自定义行为。
+- `78245b47af2a7aafcabe025828ceecca69db4df1` 属于 `upstream/main` 的官方功能，不记录为本地 patch。
+- `b6f16cb9e771f68f5bf98d0a6e57aece73d16d16` 只更新 `.co/upstream-rev` 与 Cargo git hash 以推进 upstream baseline，不记录为自定义功能。

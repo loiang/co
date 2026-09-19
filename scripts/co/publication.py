@@ -12,6 +12,7 @@ from common import (
     read_json,
     require_clean,
     require_repo,
+    sha256,
     timestamp,
     write_json,
 )
@@ -89,6 +90,9 @@ def _pending(
     expected_assets = [str(path.relative_to(root)) for path in assets]
     if record.get("assets") != expected_assets:
         raise LifecycleError("待续发布记录与当前 build assets 不一致")
+    expected_digests = {path.name: sha256(path) for path in assets}
+    if record.get("assetSha256") != expected_digests:
+        raise LifecycleError("待续发布 assets digest 不一致，拒绝替换")
     return record
 
 
@@ -167,12 +171,13 @@ def _record(
     phase: str,
 ) -> dict[str, Any]:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "tag": tag,
         "sourceBranch": source_branch,
         "targetBranch": "main",
         "sourceRev": source_rev,
         "assets": [str(path.relative_to(root)) for path in assets],
+        "assetSha256": {path.name: sha256(path) for path in assets},
         "phase": phase,
         "updatedAt": timestamp(),
     }

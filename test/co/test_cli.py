@@ -28,6 +28,16 @@ def test_build_accepts_per_invocation_core_limit() -> None:
     assert args.cores == 4
 
 
+def test_parser_uses_stable_co_executable_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Expose the Rust façade name in direct Python backend help output."""
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["--help"])
+
+    assert capsys.readouterr().out.startswith("usage: co ")
+
+
 def test_upgrade_rejects_negative_cores_before_dispatch() -> None:
     """Fail argument parsing before any upgrade worktree mutation."""
     with pytest.raises(SystemExit):

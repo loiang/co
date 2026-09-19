@@ -30,7 +30,7 @@ def _non_negative_int(value: str) -> int:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="co-lifecycle")
+    parser = argparse.ArgumentParser(prog="co")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     upgrade_parser = subcommands.add_parser("upgrade")
@@ -136,7 +136,7 @@ def main() -> int:
         print(_execute(_parser().parse_args()))
         return 0
     except (LifecycleError, OSError) as error:
-        print(f"co-lifecycle: {error}", file=sys.stderr)
+        print(f"co: {error}", file=sys.stderr)
         return 1
 
 

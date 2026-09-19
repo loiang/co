@@ -7,7 +7,7 @@ fn main() {
     match backend::run(&args[1..]) {
         Ok(code) => std::process::exit(code),
         Err(error) => {
-            eprintln!("repo: {error:#}");
+            eprintln!("co: {error:#}");
             std::process::exit(1);
         }
     }

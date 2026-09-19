@@ -17,7 +17,6 @@ from common import (
     timestamp,
     write_json,
 )
-from build import verify_static_elf
 from host_integration import (
     build_official_host,
     official_host_lock,
@@ -87,9 +86,12 @@ def _resolve_remote(root: Path, reference: str) -> str:
     resolved = None
     for line in output.splitlines():
         fields = line.split()
-        if len(fields) == 2 and fields[1] in (direct, f"{direct}^{{}}"):
-            if fields[1].endswith("^{}") or resolved is None:
-                resolved = fields[0]
+        if (
+            len(fields) == 2
+            and fields[1] in (direct, f"{direct}^{{}}")
+            and (fields[1].endswith("^{}") or resolved is None)
+        ):
+            resolved = fields[0]
     if resolved is None or not re.fullmatch(r"[0-9a-f]{40,64}", resolved):
         raise LifecycleError(f"远端 Codex ref 未解析为完整 SHA: {reference}")
     return resolved
@@ -175,7 +177,6 @@ def _validate_candidate_source(
     host_store = build_official_host(root, ni_root)
     host_binary = Path(host_store) / "bin/codex-code-mode-host"
     with verified_cli(bundle) as codex_binary:
-        verify_static_elf(codex_binary)
         command = test_candidate_binaries(root, codex_binary, host_binary)
     record = root / ".states/co/install/candidate-validation.json"
     write_json(
@@ -186,7 +187,7 @@ def _validate_candidate_source(
             "sourceRev": bundle.source_rev,
             "harnessRev": head(root),
             "release": bundle.evidence(),
-            "cliArchiveStorePath": str(bundle.cli.path),
+            "cliArchivePath": str(bundle.cli.path),
             "officialHostStorePath": host_store,
             "officialHostSha256": sha256(host_binary),
             "officialHostLock": official_host_lock(ni_root),

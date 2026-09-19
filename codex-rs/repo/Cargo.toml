@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "repo"
+name = "co"
 path = "src/main.rs"
 
 [lints]
