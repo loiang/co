@@ -1,0 +1,16 @@
+### Why
+
+Vendored OpenSSL removes the system `openssl.pc` dependency but its source build still invokes GNU Make. NixOS had a verified GNU Make in the immutable store without exposing it in the interactive PATH, so real `co build` stopped after OpenSSL Configure.
+
+### Goal
+
+Keep `co build` as the only user-facing build command and provide GNU Make to the official Cargo builder without invoking `nix build`, `nix eval` or `nix develop`.
+
+### Accomplished
+
+- Prefer a verified GNU Make already present in the child PATH.
+- On Linux, fall back to an existing versioned `/nix/store/*-gnumake-*/bin/make` and select it deterministically.
+- Validate executable type, store boundary and `GNU Make --version`, then prepend only the selected directory to the builder PATH.
+- Fail before long compilation when no verified tool exists.
+- Add isolated resolver/builder tests and document the exact host-tool boundary in `docs/pacth`.
+- Validation: `test/co` 146 passed, compileall and `git diff --check` passed; real host resolver selected GNU Make 4.4.1 without executing a Nix command.
