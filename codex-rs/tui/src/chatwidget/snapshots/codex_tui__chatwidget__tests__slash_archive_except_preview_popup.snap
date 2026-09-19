@@ -1,0 +1,15 @@
+---
+source: tui/src/chatwidget/tests/slash_commands.rs
+assertion_line: 3005
+expression: "render_bottom_popup(&chat, 100)"
+---
+  Archive-except preview
+  4 groups; 1 eligible (1 sessions); 1 protected; 1 limit-skipped; 1 already archived.
+
+› 1. Close preview (default)                    No sessions will be archived
+  ·  root=00000000-0000-0000-0000-0000000000c9  members=1 targets=1 status=eligible
+  ·  root=00000000-0000-0000-0000-0000000000ca  members=1 targets=1 status=protected:loaded,pinned
+  ·  root=00000000-0000-0000-0000-0000000000cb  members=1 targets=1 status=limit-skipped
+  ·  root=00000000-0000-0000-0000-0000000000cc  members=1 targets=0 status=archived
+
+  Press enter to confirm or esc to go back
