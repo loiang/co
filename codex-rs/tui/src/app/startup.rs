@@ -3,7 +3,6 @@
 //! Owns the main app run loop from app-server bootstrap through terminal shutdown. Startup input
 //! remains isolated from protected interactive requests until the initialized composer owns it.
 
-use super::agents_overview_view::AgentsOverviewFocus;
 use super::reconnect::ReconnectState;
 use super::*;
 use crate::session_start::SessionStartAction;
@@ -155,8 +154,10 @@ impl App {
         startup_elapsed_before_app: Duration,
         startup_bootstrap: Option<AppServerBootstrap>,
         startup_hooks_browser: Option<HooksListEntry>,
+        daemon_startup_warning: Option<String>,
         mut startup_draft: StartupDraftPump,
         managed_worktree: Option<crate::ManagedTuiWorktree>,
+        daemon_cli_executable: Option<AbsolutePathBuf>,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
 
@@ -378,6 +379,7 @@ impl App {
         let mut start_in_agents_overview =
             matches!(&session_selection, SessionSelection::AgentsOverview);
         let mut read_only_thread = false;
+        let mut history_notice = None;
         let (mut chat_widget, initial_started_thread) = match session_selection {
             SessionSelection::StartFresh
             | SessionSelection::Exit
@@ -493,7 +495,10 @@ impl App {
                             )
                             .await
                         {
-                            Ok(result) => result,
+                            Ok(result) => result.map(|(thread, notice)| {
+                                history_notice = notice;
+                                thread
+                            }),
                             Err(err) => return shutdown_on_startup_error(app_server, err).await,
                         }
                     }
@@ -673,6 +678,7 @@ impl App {
         }
         chat_widget.note_rendered_width(tui.terminal.last_known_screen_size.width);
         chat_widget.remote_connection = remote_connection;
+        chat_widget.snapshot_local_images = app_server_target.uses_remote_workspace();
         chat_widget.set_local_worktree_operations(!crate::uses_remote_workspace_or_environment(
             &app_server_target,
             environment_manager.as_ref(),
@@ -682,37 +688,21 @@ impl App {
             AppServerTarget::LocalDaemon { .. }
         ));
         let thread_and_widget_ms = thread_and_widget_started_at.elapsed().as_millis();
-        let windows_sandbox_host =
-            windows_sandbox_host(&app_server_target, environment_manager.as_ref());
-        chat_widget.windows_sandbox_host = windows_sandbox_host;
-        let windows_sandbox_host_is_local = windows_sandbox_host == WindowsSandboxHost::Local;
-        #[cfg(target_os = "windows")]
-        let sandbox_ready =
-            if windows_sandbox_host_is_local && chat_widget.required_elevated_windows_sandbox() {
-                windows_sandbox_ready(&mut app_server).await
-            } else {
-                false
-            };
-        #[cfg(not(target_os = "windows"))]
-        let sandbox_ready = false;
-        #[cfg(target_os = "windows")]
-        if sandbox_ready {
-            chat_widget.windows_sandbox_elevated_setup_complete = true;
-        }
-        chat_widget.maybe_prompt_windows_sandbox_enable(
-            should_prompt_windows_sandbox_nux_at_startup
-                && windows_sandbox_host_is_local
-                && !sandbox_ready,
-        );
-        #[cfg(target_os = "windows")]
-        if windows_sandbox_host == WindowsSandboxHost::Mixed
-            && should_prompt_windows_sandbox_nux_at_startup
-        {
+        chat_widget.windows_sandbox_local_server = !app_server_target.uses_remote_workspace()
+            && app_server.app_server_platform_os() == Some("windows");
+        chat_widget.windows_sandbox_host = if app_server_target.uses_remote_workspace() {
+            WindowsSandboxHost::Remote
+        } else {
+            initial_started_thread
+                .as_ref()
+                .map_or(WindowsSandboxHost::Unknown, |started| {
+                    started.session.windows_sandbox_host
+                })
+        };
+        // This launch warning belongs to the TUI, independent of picker/trust client replacement.
+        if let Some(warning) = daemon_startup_warning {
             app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                history_cell::StartupWarningsCell::new(vec![
-                    "Windows sandbox setup is unavailable when local and remote executors are configured together."
-                        .to_string(),
-                ]),
+                history_cell::StartupWarningsCell::new(vec![warning]),
             )));
         }
         let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
@@ -755,6 +745,7 @@ See the Codex keymap documentation for supported actions and examples."
             last_thread_usage_status_cell: None,
             pending_thread_usage_history_refresh: false,
             overlay: None,
+            retained_analytics: None,
             deferred_history_lines: Vec::new(),
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
@@ -777,15 +768,19 @@ See the Codex keymap documentation for supported actions and examples."
                     .map(|(_, key)| key.clone()),
                 ..Default::default()
             },
+            daemon_cli_executable,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
-            windows_sandbox: WindowsSandboxState::default(),
+            windows_sandbox: WindowsSandboxState {
+                prompt_after_trust: should_prompt_windows_sandbox_nux_at_startup,
+                ..Default::default()
+            },
             thread_event_channels: HashMap::new(),
             pending_realtime_speech_replay: HashMap::new(),
             pending_realtime_transcript_replay: HashMap::new(),
             realtime_replay_order: VecDeque::new(),
             temporary_structured_requests: HashMap::new(),
-            pending_thread_titles: HashSet::new(),
+            pending_thread_titles: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
             agents_overview: Default::default(),
@@ -835,7 +830,7 @@ See the Codex keymap documentation for supported actions and examples."
             );
         }
         if start_in_agents_overview {
-            app.open_agents_overview(&app_server, AgentsOverviewFocus::Composer);
+            app.open_agents_overview(&app_server);
         } else if !matches!(app.app_server_target, AppServerTarget::Embedded) {
             app.refresh_agents_overview_threads(&app_server);
         }
@@ -867,6 +862,10 @@ See the Codex keymap documentation for supported actions and examples."
             if read_only_thread {
                 app.ensure_thread_channel(thread_id).mark_external_writer();
                 app.chat_widget.show_external_writer_thread();
+                if let Some(notice) = history_notice {
+                    app.chat_widget
+                        .add_info_message(notice.to_string(), /*hint*/ None);
+                }
             }
             if !read_only_thread
                 && should_prompt_for_paused_goal_after_startup_resume

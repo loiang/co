@@ -3,6 +3,7 @@
 //! This module owns the `App` struct, shared imports, and the high-level run loop that coordinates
 //! the focused app submodules.
 
+pub(crate) use self::agents_overview::PendingWorktree;
 use crate::AppServerTarget;
 use crate::app_backtrack::BacktrackState;
 use crate::app_command::AppCommand;
@@ -32,6 +33,7 @@ use crate::bottom_pane::FeedbackAudience;
 use crate::bottom_pane::McpElicitationApprovalRequest;
 use crate::bottom_pane::McpServerElicitationFormRequest;
 use crate::bottom_pane::PermissionsApprovalRequest;
+use crate::bottom_pane::RestrictedInputMode;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
@@ -142,8 +144,6 @@ use codex_config::LoaderOverrides;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::MemoriesToml;
 use codex_config::types::ModelAvailabilityNuxConfig;
-#[cfg(target_os = "windows")]
-use codex_config::types::WindowsToml;
 use codex_exec_server::EnvironmentManager;
 use codex_features::Feature;
 use codex_features::FeaturesToml;
@@ -194,6 +194,7 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use toml::Value as TomlValue;
 use uuid::Uuid;
 mod agent_message_consolidation;
@@ -216,6 +217,7 @@ mod backend_banner_fallback;
 mod background_requests;
 mod config_persistence;
 mod connector_mentions;
+mod daemon_menu;
 mod event_dispatch;
 mod exit_summary;
 mod experimental_features;
@@ -572,8 +574,9 @@ pub(crate) struct App {
     last_thread_usage_status_cell: Option<history_ui::ThreadUsageStatusHistory>,
     pub(crate) pending_thread_usage_history_refresh: bool,
 
-    // Pager overlay state (Transcript or Static like Diff)
+    // Alternate-screen overlays: transcript, diff, and analytics.
     pub(crate) overlay: Option<Overlay>,
+    pub(crate) retained_analytics: Option<Box<crate::analytics::AnalyticsView>>,
     pub(crate) deferred_history_lines: Vec<crate::terminal_hyperlinks::HyperlinkLine>,
     has_emitted_history_lines: bool,
     transcript_reflow: TranscriptReflowState,
@@ -606,6 +609,7 @@ pub(crate) struct App {
     app_server_target: AppServerTarget,
     reconnect: reconnect::ReconnectState,
     /// Set when the user confirms an update; propagated on exit.
+    daemon_cli_executable: Option<AbsolutePathBuf>,
     pub(crate) pending_update_action: Option<UpdateAction>,
 
     /// Tracks the thread we intentionally shut down while exiting the app.
@@ -627,7 +631,7 @@ pub(crate) struct App {
     realtime_replay_order: VecDeque<ThreadId>,
     temporary_structured_requests: HashMap<ThreadId, mpsc::UnboundedSender<ServerNotification>>,
     /// Track title generation across thread switches and deduplicate automatic requests.
-    pending_thread_titles: HashSet<(ThreadId, ThreadTitleDestination)>,
+    pending_thread_titles: HashMap<(ThreadId, ThreadTitleDestination), CancellationToken>,
     thread_event_listener_tasks: HashMap<ThreadId, JoinHandle<()>>,
     agent_navigation: AgentNavigationState,
     agents_overview: agents_overview::AgentsOverviewState,
@@ -889,7 +893,8 @@ impl App {
             if self.reconnect.presentation == reconnect::ReconnectPresentation::Overview {
                 self.chat_widget.handle_disconnected_view_key(*key);
             } else {
-                self.chat_widget.handle_disconnected_key(*key);
+                self.chat_widget
+                    .handle_restricted_key(*key, RestrictedInputMode::Disconnected);
             }
             return Ok(AppRunControl::Continue);
         }
@@ -934,10 +939,10 @@ impl App {
                         && self.reconnect.presentation
                             == reconnect::ReconnectPresentation::Conversation
                     {
-                        self.chat_widget.handle_disconnected_key(KeyEvent::new(
-                            KeyCode::Null,
-                            KeyModifiers::NONE,
-                        ));
+                        self.chat_widget.handle_restricted_key(
+                            KeyEvent::new(KeyCode::Null, KeyModifiers::NONE),
+                            RestrictedInputMode::Disconnected,
+                        );
                     }
                 }
                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {

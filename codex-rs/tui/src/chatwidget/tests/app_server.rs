@@ -44,6 +44,7 @@ fn thread_settings_for_test(
 
 fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::ThreadSessionState {
     crate::session_state::ThreadSessionState {
+        windows_sandbox_host: crate::app::WindowsSandboxHost::Local,
         thread_id,
         forked_from_id: None,
         fork_parent_title: None,
@@ -64,6 +65,39 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
         message_history: None,
         network_proxy: None,
         rollout_path: None,
+    }
+}
+
+#[tokio::test]
+async fn session_header_uses_catalog_display_name_without_changing_model() {
+    let slug = "us.openai.gpt-5.6-luna";
+    for (name, first_event, display_name) in [
+        ("startup", true, Some("GPT-5.6 Luna")),
+        ("resume", false, Some("GPT-5.6 Luna")),
+        ("unknown_model", false, None),
+    ] {
+        let (mut chat, mut events, _ops) = make_chatwidget_manual(Some(slug)).await;
+        let mut preset = get_available_model(&chat, "gpt-5.5");
+        preset.model = slug.to_string();
+        preset.display_name = display_name.unwrap_or_default().to_string();
+        chat.model_catalog = Arc::new(ModelCatalog::new(
+            display_name.map(|_| preset).into_iter().collect(),
+        ));
+        chat.show_welcome_banner = first_event;
+        chat.local_settings.tui.show_tooltips = false;
+        let mut session = configured_thread_session(ThreadId::new());
+        session.model = slug.to_string();
+        session.reasoning_effort = Some(ReasoningEffortConfig::High);
+        chat.handle_thread_session(session);
+
+        let rendered = drain_insert_history_with(&mut events, HistoryCell::raw_lines)
+            .iter()
+            .map(|lines| lines_to_single_string(lines))
+            .collect::<String>()
+            .replace(CODEX_CLI_VERSION, "<VERSION>")
+            .replace("C:\\tmp\\thread-settings", "/tmp/thread-settings");
+        assert_chatwidget_snapshot!(format!("catalog_model_session_header_{name}"), rendered);
+        assert_eq!(chat.current_model(), slug);
     }
 }
 
@@ -825,11 +859,11 @@ async fn live_app_server_turn_completed_clears_working_status_after_answer_item(
         /*replay_kind*/ None,
     );
 
-    let completion_cells = drain_insert_history(&mut rx)
+    let completion_cells = drain_insert_history_normalized(&mut rx)
         .iter()
-        .map(|lines| normalize_completion_timestamps(lines_to_single_string(lines).trim()))
+        .map(|lines| lines_to_single_string(lines).trim().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(completion_cells, vec!["done [completion time]"]);
+    assert_eq!(completion_cells, vec!["[completion time]"]);
     assert!(!chat.bottom_pane.is_task_running());
     assert!(chat.bottom_pane.status_widget().is_none());
     assert_eq!(
@@ -1080,6 +1114,7 @@ async fn live_app_server_command_execution_strips_shell_wrapper() {
             turn_id: "turn-1".to_string(),
             started_at_ms: 0,
             item: AppServerThreadItem::CommandExecution {
+                model_context: None,
                 id: "cmd-1".to_string(),
                 command: command.clone(),
                 cwd: test_path_buf("/tmp").abs().into(),
@@ -1104,6 +1139,7 @@ async fn live_app_server_command_execution_strips_shell_wrapper() {
             turn_id: "turn-1".to_string(),
             completed_at_ms: 0,
             item: AppServerThreadItem::CommandExecution {
+                model_context: None,
                 id: "cmd-1".to_string(),
                 command,
                 cwd: test_path_buf("/tmp").abs().into(),
@@ -1585,13 +1621,11 @@ async fn live_app_server_stream_recovery_restores_previous_status_header() {
         /*replay_kind*/ None,
     );
 
-    let status = chat
-        .bottom_pane
-        .status_widget()
-        .expect("status indicator should be visible");
-    assert_eq!(status.header(), "Working");
-    assert_eq!(status.details(), None);
+    assert_eq!(chat.status_state.current_status.header, "Working");
+    assert_eq!(chat.status_state.current_status.details, None);
     assert!(chat.status_state.retry_status_header.is_none());
+    assert!(chat.bottom_pane.status_widget().is_none());
+    assert!(chat.active_cell_is_stream_tail());
 }
 
 #[tokio::test]

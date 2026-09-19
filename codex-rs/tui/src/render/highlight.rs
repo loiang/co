@@ -1,7 +1,7 @@
 //! Syntax highlighting engine for the TUI.
 //!
 //! Wraps [syntect] with the [two_face] grammar and theme bundles to provide
-//! ~250-language syntax highlighting and 32 bundled color themes.  The module
+//! ~250-language syntax highlighting and bundled color themes.  The module
 //! owns five process-global singletons:
 //!
 //! | Singleton | Type | Purpose |
@@ -16,13 +16,15 @@
 //! config is resolved) to persist the user preference and seed the `THEME`
 //! lock.  After that, [`set_syntax_theme`] and [`current_syntax_theme`] can
 //! swap/snapshot the theme for live preview.  All highlighting functions read
-//! the theme via `theme_lock()`.
+//! the theme via `theme_lock()`. Unit tests isolate the active theme and its
+//! revision per thread so parallel tests cannot change each other’s rendering.
 //!
 //! **Guardrails:** inputs exceeding 512 KB or 10 000 lines, or containing an
 //! individual line longer than 4 KiB, are rejected early (returns `None`) to
 //! prevent pathological CPU/memory usage.  Callers must fall back to plain
 //! unstyled text.
 
+use super::model_themes;
 use ratatui::style::Color as RtColor;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
@@ -32,7 +34,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::RwLock;
+#[cfg(not(test))]
 use std::sync::atomic::AtomicU64;
+#[cfg(not(test))]
 use std::sync::atomic::Ordering;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::Color as SyntectColor;
@@ -55,10 +59,18 @@ pub(crate) use streaming::StreamingCodeHighlighter;
 // -- Global singletons -------------------------------------------------------
 
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+#[cfg(not(test))]
 static THEME: OnceLock<RwLock<Theme>> = OnceLock::new();
+#[cfg(not(test))]
 static THEME_REVISION: AtomicU64 = AtomicU64::new(0);
 static THEME_OVERRIDE: OnceLock<Option<String>> = OnceLock::new();
 static CODEX_HOME: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+#[cfg(test)]
+thread_local! {
+    static TEST_THEME: std::cell::OnceCell<std::sync::Arc<RwLock<Theme>>> = const { std::cell::OnceCell::new() };
+    static TEST_THEME_REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 // Syntect/bat encode ANSI palette semantics in alpha:
 // `a=0` => indexed ANSI palette via RGB payload, `a=1` => terminal default.
@@ -95,7 +107,11 @@ pub(crate) fn set_theme_override(
     let warning = validate_theme_name(name.as_deref(), codex_home.as_deref());
     let override_set_ok = THEME_OVERRIDE.set(name.clone()).is_ok();
     let codex_home_set_ok = CODEX_HOME.set(codex_home.clone()).is_ok();
-    if THEME.get().is_some() {
+    #[cfg(not(test))]
+    let initialized = THEME.get().is_some();
+    #[cfg(test)]
+    let initialized = TEST_THEME.with(|theme| theme.get().is_some());
+    if initialized {
         set_syntax_theme(resolve_theme_with_override(
             name.as_deref(),
             codex_home.as_deref(),
@@ -117,18 +133,14 @@ pub(crate) fn validate_theme_name(name: Option<&str>, codex_home: Option<&Path>)
     let custom_theme_path_display = codex_home
         .map(|home| custom_theme_path(name, home).display().to_string())
         .unwrap_or_else(|| format!("$CODEX_HOME/themes/{name}.tmTheme"));
-    // Bundled themes always resolve.
-    if parse_theme_name(name).is_some() {
+    if resolve_theme_by_name(name, codex_home).is_some() {
         return None;
     }
     // Custom themes must parse successfully; an unreadable/invalid file should
     // still surface a startup warning so users can diagnose configuration issues.
     if let Some(home) = codex_home {
         let custom_path = custom_theme_path(name, home);
-        if custom_path.is_file() {
-            if load_custom_theme(name, home).is_some() {
-                return None;
-            }
+        if custom_path.try_exists().unwrap_or(true) {
             return Some(format!(
                 "Custom theme \"{name}\" at {custom_theme_path_display} could not \
                  be loaded (invalid .tmTheme format). Falling back to the default theme."
@@ -217,14 +229,7 @@ fn resolve_theme_with_override(name: Option<&str>, codex_home: Option<&Path>) ->
 
     // Honor user-configured theme if valid.
     if let Some(name) = name {
-        // 1. Try bundled theme by kebab-case name.
-        if let Some(theme_name) = parse_theme_name(name) {
-            return ts.get(theme_name).clone();
-        }
-        // 2. Try loading {CODEX_HOME}/themes/{name}.tmTheme from disk.
-        if let Some(home) = codex_home
-            && let Some(theme) = load_custom_theme(name, home)
-        {
+        if let Some(theme) = resolve_theme_by_name(name, codex_home) {
             return theme;
         }
         tracing::debug!("Theme \"{name}\" not recognized; using default theme");
@@ -243,34 +248,60 @@ fn build_default_theme() -> Theme {
     resolve_theme_with_override(name, codex_home)
 }
 
-fn theme_lock() -> &'static RwLock<Theme> {
-    THEME.get_or_init(|| RwLock::new(build_default_theme()))
+fn theme_lock() -> impl std::ops::Deref<Target = RwLock<Theme>> {
+    #[cfg(not(test))]
+    {
+        THEME.get_or_init(|| RwLock::new(build_default_theme()))
+    }
+    #[cfg(test)]
+    TEST_THEME.with(|theme| {
+        theme
+            .get_or_init(|| std::sync::Arc::new(RwLock::new(build_default_theme())))
+            .clone()
+    })
 }
 
 /// Swap the active syntax theme at runtime and invalidate rendered-content caches.
 pub(crate) fn set_syntax_theme(theme: Theme) {
-    let mut guard = match theme_lock().write() {
+    let active_theme = theme_lock();
+    let mut guard = match active_theme.write() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
     *guard = theme;
+    #[cfg(not(test))]
     THEME_REVISION.fetch_add(1, Ordering::Release);
+    #[cfg(test)]
+    TEST_THEME_REVISION.with(|revision| revision.set(revision.get().wrapping_add(1)));
 }
 
 /// Return the revision of the active syntax theme for rendered-content caches.
 pub(crate) fn syntax_theme_revision() -> u64 {
-    THEME_REVISION.load(Ordering::Acquire)
+    #[cfg(not(test))]
+    {
+        THEME_REVISION.load(Ordering::Acquire)
+    }
+    #[cfg(test)]
+    TEST_THEME_REVISION.with(std::cell::Cell::get)
 }
 
 /// Clone the current syntax theme (e.g. to save for cancel-restore).
 pub(crate) fn current_syntax_theme() -> Theme {
-    match theme_lock().read() {
+    let active_theme = theme_lock();
+    match active_theme.read() {
         Ok(theme) => theme.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     }
 }
 
-/// Raw RGB background colors extracted from syntax theme diff/markup scopes.
+/// An explicit diff background, including the ANSI terminal-default marker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DiffScopeBackground {
+    Rgb((u8, u8, u8)),
+    TerminalDefault,
+}
+
+/// Background colors extracted from syntax theme diff/markup scopes.
 ///
 /// These are theme-provided colors, not yet adapted for any particular color
 /// depth.  [`diff_render`](crate::diff_render) converts them to ratatui
@@ -281,9 +312,9 @@ pub(crate) fn current_syntax_theme() -> Theme {
 /// backgrounds, in which case the diff renderer falls back to its hardcoded
 /// palette.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct DiffScopeBackgroundRgbs {
-    pub inserted: Option<(u8, u8, u8)>,
-    pub deleted: Option<(u8, u8, u8)>,
+pub(crate) struct DiffScopeBackgrounds {
+    pub inserted: Option<DiffScopeBackground>,
+    pub deleted: Option<DiffScopeBackground>,
 }
 
 /// Query the active syntax theme for diff-scope background colors.
@@ -291,27 +322,34 @@ pub(crate) struct DiffScopeBackgroundRgbs {
 /// Prefers `markup.inserted` / `markup.deleted` (the TextMate convention used
 /// by most VS Code themes) and falls back to `diff.inserted` / `diff.deleted`
 /// (used by some older `.tmTheme` files).
-pub(crate) fn diff_scope_background_rgbs() -> DiffScopeBackgroundRgbs {
+pub(crate) fn diff_scope_backgrounds() -> DiffScopeBackgrounds {
     let theme = current_syntax_theme();
-    diff_scope_background_rgbs_for_theme(&theme)
+    diff_scope_backgrounds_for_theme(&theme)
 }
 
 /// Pure extraction helper, separated from the global theme singleton so tests
 /// can pass arbitrary themes.
-fn diff_scope_background_rgbs_for_theme(theme: &Theme) -> DiffScopeBackgroundRgbs {
+fn diff_scope_backgrounds_for_theme(theme: &Theme) -> DiffScopeBackgrounds {
     let highlighter = Highlighter::new(theme);
-    let inserted = scope_background_rgb(&highlighter, "markup.inserted")
-        .or_else(|| scope_background_rgb(&highlighter, "diff.inserted"));
-    let deleted = scope_background_rgb(&highlighter, "markup.deleted")
-        .or_else(|| scope_background_rgb(&highlighter, "diff.deleted"));
-    DiffScopeBackgroundRgbs { inserted, deleted }
+    let inserted = scope_background(&highlighter, "markup.inserted")
+        .or_else(|| scope_background(&highlighter, "diff.inserted"));
+    let deleted = scope_background(&highlighter, "markup.deleted")
+        .or_else(|| scope_background(&highlighter, "diff.deleted"));
+    DiffScopeBackgrounds { inserted, deleted }
 }
 
 /// Extract the background color for a single TextMate scope, if defined.
-fn scope_background_rgb(highlighter: &Highlighter<'_>, scope_name: &str) -> Option<(u8, u8, u8)> {
+fn scope_background(
+    highlighter: &Highlighter<'_>,
+    scope_name: &str,
+) -> Option<DiffScopeBackground> {
     let scope = Scope::new(scope_name).ok()?;
     let bg = highlighter.style_mod_for_stack(&[scope]).background?;
-    Some((bg.r, bg.g, bg.b))
+    Some(if bg.a == ANSI_ALPHA_DEFAULT {
+        DiffScopeBackground::TerminalDefault
+    } else {
+        DiffScopeBackground::Rgb((bg.r, bg.g, bg.b))
+    })
 }
 
 /// Query the active syntax theme for the first foreground style provided by the
@@ -321,7 +359,10 @@ pub(crate) fn foreground_style_for_scopes(scope_names: &[&str]) -> Option<Style>
     foreground_style_for_scopes_with_theme(&theme, scope_names)
 }
 
-fn foreground_style_for_scopes_with_theme(theme: &Theme, scope_names: &[&str]) -> Option<Style> {
+pub(crate) fn foreground_style_for_scopes_with_theme(
+    theme: &Theme,
+    scope_names: &[&str],
+) -> Option<Style> {
     let highlighter = Highlighter::new(theme);
     scope_names.iter().find_map(|scope_name| {
         let scope = Scope::new(scope_name).ok()?;
@@ -338,12 +379,8 @@ fn foreground_style_for_scopes_with_theme(theme: &Theme, scope_names: &[&str]) -
 pub(crate) fn configured_theme_name() -> String {
     // Explicit user override?
     if let Some(Some(name)) = THEME_OVERRIDE.get() {
-        if parse_theme_name(name).is_some() {
-            return name.clone();
-        }
-        if let Some(Some(home)) = CODEX_HOME.get()
-            && load_custom_theme(name, home).is_some()
-        {
+        let home = CODEX_HOME.get().and_then(|home| home.as_deref());
+        if resolve_theme_by_name(name, home).is_some() {
             return name.clone();
         }
     }
@@ -360,11 +397,11 @@ pub(crate) fn resolve_theme_by_name(name: &str, codex_home: Option<&Path>) -> Op
     }
     // Custom .tmTheme file?
     if let Some(home) = codex_home
-        && let Some(theme) = load_custom_theme(name, home)
+        && custom_theme_path(name, home).try_exists().unwrap_or(true)
     {
-        return Some(theme);
+        return load_custom_theme(name, home);
     }
-    None
+    model_themes::resolve(name)
 }
 
 /// A theme available in the picker, either bundled or loaded from a custom
@@ -407,6 +444,18 @@ pub(crate) fn list_available_themes(codex_home: Option<&Path>) -> Vec<ThemeEntry
                     }
                 }
             }
+        }
+    }
+
+    // Existing custom files take precedence over the new bundled names.
+    for (name, _) in model_themes::THEMES {
+        if !entries.iter().any(|entry| entry.name == *name)
+            && resolve_theme_by_name(name, codex_home).is_some()
+        {
+            entries.push(ThemeEntry {
+                name: (*name).to_string(),
+                is_custom: codex_home.is_some_and(|home| custom_theme_path(name, home).exists()),
+            });
         }
     }
 
@@ -663,7 +712,8 @@ fn highlighted_line_spans(ranges: Vec<(SyntectStyle, &str)>) -> Vec<Span<'static
 /// Each inner Vec represents one source line.  Returns None when the language
 /// is not recognized or the input exceeds safety limits.
 fn highlight_to_line_spans(code: &str, lang: &str) -> Option<Vec<Vec<Span<'static>>>> {
-    let theme_guard = match theme_lock().read() {
+    let active_theme = theme_lock();
+    let theme_guard = match active_theme.read() {
         Ok(theme_guard) => theme_guard,
         Err(poisoned) => poisoned.into_inner(),
     };
@@ -728,6 +778,15 @@ mod tests {
     use syntect::highlighting::StyleModifier;
     use syntect::highlighting::ThemeItem;
     use syntect::highlighting::ThemeSettings;
+
+    #[test]
+    fn active_theme_and_revision_are_isolated_between_test_threads() {
+        let original = (current_syntax_theme(), syntax_theme_revision());
+        std::thread::spawn(|| set_syntax_theme(Theme::default()))
+            .join()
+            .unwrap();
+        assert_eq!((current_syntax_theme(), syntax_theme_revision()), original);
+    }
 
     fn write_minimal_tmtheme(path: &Path) {
         // Minimal valid .tmTheme plist (enough for syntect to parse).
@@ -1269,12 +1328,12 @@ mod tests {
             ],
             ..Theme::default()
         };
-        let rgbs = diff_scope_background_rgbs_for_theme(&theme);
+        let rgbs = diff_scope_backgrounds_for_theme(&theme);
         assert_eq!(
             rgbs,
-            DiffScopeBackgroundRgbs {
-                inserted: Some((10, 20, 30)),
-                deleted: Some((40, 50, 60)),
+            DiffScopeBackgrounds {
+                inserted: Some(DiffScopeBackground::Rgb((10, 20, 30))),
+                deleted: Some(DiffScopeBackground::Rgb((40, 50, 60))),
             }
         );
     }
@@ -1286,10 +1345,10 @@ mod tests {
             scopes: vec![theme_item("constant.numeric", Some((1, 2, 3)))],
             ..Theme::default()
         };
-        let rgbs = diff_scope_background_rgbs_for_theme(&theme);
+        let rgbs = diff_scope_backgrounds_for_theme(&theme);
         assert_eq!(
             rgbs,
-            DiffScopeBackgroundRgbs {
+            DiffScopeBackgrounds {
                 inserted: None,
                 deleted: None,
             }
@@ -1328,7 +1387,7 @@ mod tests {
     fn bundled_theme_can_provide_diff_scope_backgrounds() {
         let theme = resolve_theme_by_name("github", /*codex_home*/ None)
             .expect("expected built-in GitHub theme to load");
-        let rgbs = diff_scope_background_rgbs_for_theme(&theme);
+        let rgbs = diff_scope_backgrounds_for_theme(&theme);
         assert!(
             rgbs.inserted.is_some() && rgbs.deleted.is_some(),
             "expected built-in theme to provide insert/delete backgrounds, got {rgbs:?}"
@@ -1350,12 +1409,12 @@ mod tests {
 
         let theme = resolve_theme_by_name("custom-diff", Some(dir.path()))
             .expect("expected custom theme to resolve");
-        let rgbs = diff_scope_background_rgbs_for_theme(&theme);
+        let rgbs = diff_scope_backgrounds_for_theme(&theme);
         assert_eq!(
             rgbs,
-            DiffScopeBackgroundRgbs {
-                inserted: Some((16, 32, 48)),
-                deleted: Some((64, 80, 96)),
+            DiffScopeBackgrounds {
+                inserted: Some(DiffScopeBackground::Rgb((16, 32, 48))),
+                deleted: Some(DiffScopeBackground::Rgb((64, 80, 96))),
             }
         );
     }
@@ -1608,3 +1667,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "highlight_model_tests.rs"]
+mod model_tests;

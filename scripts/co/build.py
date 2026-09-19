@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from common import (
     LifecycleError,
     OutputMode,
+    git,
     git_flake,
     require_no_untracked,
     require_repo,
@@ -141,6 +142,11 @@ def _nix_build(root: Path, version: str, cores: int = 0) -> tuple[str, Path]:
     with tempfile.TemporaryDirectory(prefix="co-build-version-") as temporary:
         version_input = Path(temporary)
         (version_input / "version").write_text(f"{version}\n", encoding="utf-8")
+        git(version_input, "init", "--quiet", "--initial-branch=main")
+        git(version_input, "config", "user.name", "co-build")
+        git(version_input, "config", "user.email", "co-build@localhost")
+        git(version_input, "add", "version")
+        git(version_input, "commit", "--quiet", "-m", "set build version")
         result = run(
             [
                 "nix",
@@ -148,7 +154,7 @@ def _nix_build(root: Path, version: str, cores: int = 0) -> tuple[str, Path]:
                 git_flake(root, "codex"),
                 "--override-input",
                 "build-version",
-                f"path:{version_input}",
+                git_flake(version_input),
                 "--no-link",
                 "--print-out-paths",
                 "--no-write-lock-file",

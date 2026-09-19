@@ -71,6 +71,11 @@ async fn connected_trust_cancellation_and_acceptance_control_task_creation() -> 
                         methods.lock().unwrap().push(request.method.clone());
                         let result = match request.method.as_str() {
                             "initialize" => json!({"userAgent": "trust-pty"}),
+                            "experimentalFeature/list" => json!({"data": (["code_mode_host", "auth_elicitation"].map(|name| json!({
+                                "name": name, "stage": "stable", "displayName": null,
+                                "description": null, "announcement": null,
+                                "enabled": true, "defaultEnabled": true,
+                            }))), "nextCursor": null}),
                             "account/read" => {
                                 json!({"account": {"type": "apiKey"}, "requiresOpenaiAuth": false})
                             }
@@ -153,21 +158,17 @@ async fn connected_trust_cancellation_and_acceptance_control_task_creation() -> 
         };
         for (expected, input) in [
             (prompt, b"\x1b".as_slice()),
-            ("create task", b"\x1b"),
-            ("Launch-folder task", b"\x1b[B\x0e"),
-            ("create task", b"new task"),
-            ("› new task", b"\r"),
+            ("n new", b"\x1b"),
+            ("Launch-folder task", b"\x1b[Bn"),
             (prompt, b"\x1b"),
-            ("› new task", b"\r"),
+            ("n new", b"n"),
             ("You are in", b"\x1b"),
-            ("› new task", b"\x1b"),
-            ("ctrl+o resume", b"\x0f"),
+            ("o resume", b"o"),
             ("Resume a previous session", b"\x1b[C"),
             ("Untrusted saved task", b"\r"),
             ("Open existing task", b"\r"),
             ("moved-folder", b"\x1b"),
-            ("ctrl+o resume", b"\x0e"),
-            ("› new task", b"\r"),
+            ("o resume", b"n"),
             (prompt, b"\r"),
         ] {
             let is_consent = expected == prompt
