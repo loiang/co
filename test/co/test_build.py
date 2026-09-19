@@ -12,7 +12,7 @@ ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "co"))
 
 from build import _nix_build, _official_version  # noqa: E402
-from common import LifecycleError  # noqa: E402
+from common import LifecycleError, git  # noqa: E402
 
 
 def test_official_version_resolves_latest_stable_rust_release() -> None:
@@ -50,7 +50,7 @@ def test_official_version_rejects_nonstable_or_malformed_release(
 
 
 def test_nix_build_uses_all_cores_for_one_derivation(tmp_path: Path) -> None:
-    """Keep package concurrency bounded while exposing every CPU core."""
+    """Use a committed Git input while exposing every CPU core."""
     store = tmp_path / "store"
     version_input = tmp_path / "version-input"
     version_input.mkdir()
@@ -67,6 +67,8 @@ def test_nix_build_uses_all_cores_for_one_derivation(tmp_path: Path) -> None:
     assert output == str(store)
     assert binary == store / "bin/codex"
     assert (version_input / "version").read_text(encoding="utf-8") == "0.154.0\n"
+    assert git(version_input, "rev-parse", "HEAD")
+    assert git(version_input, "status", "--porcelain") == ""
     run.assert_called_once_with(
         [
             "nix",
@@ -74,7 +76,7 @@ def test_nix_build_uses_all_cores_for_one_derivation(tmp_path: Path) -> None:
             f"git+{tmp_path.as_uri()}#codex",
             "--override-input",
             "build-version",
-            f"path:{version_input}",
+            f"git+{version_input.as_uri()}",
             "--no-link",
             "--print-out-paths",
             "--no-write-lock-file",
