@@ -13,8 +13,15 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
+from unittest.mock import patch
+from urllib.request import Request, urlopen
 
 import pytest
+
+
+HOST_READINESS_TIMEOUT = 5.0
+HOST_READINESS_INTERVAL = 0.05
+HOST_READINESS_REQUEST_TIMEOUT = 0.5
 
 
 def _required_binary(variable: str) -> Path:
@@ -181,6 +188,109 @@ stream_max_retries = 0
     (home / "config.toml").write_text(content, encoding="utf-8")
 
 
+def _read_available(source: BinaryIO | None) -> str:
+    if source is None:
+        return ""
+    try:
+        descriptor = source.fileno()
+    except (AttributeError, OSError, ValueError):
+        return ""
+    chunks: list[bytes] = []
+    while True:
+        try:
+            ready = select.select([descriptor], [], [], 0)[0]
+            if not ready:
+                break
+            chunk = os.read(descriptor, 65536)
+        except (OSError, ValueError):
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b"".join(chunks).decode(errors="replace").strip()
+
+
+def _wait_for_host_ready(
+    process: subprocess.Popen[bytes],
+    host_url: str,
+    *,
+    timeout: float = HOST_READINESS_TIMEOUT,
+    interval: float = HOST_READINESS_INTERVAL,
+) -> None:
+    health_url = f"{host_url.rstrip('/')}/healthz"
+    deadline = time.monotonic() + timeout
+    last_error = "no response"
+    while True:
+        if process.poll() is not None:
+            raise AssertionError("code-mode host exited before /healthz became ready")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            request = Request(health_url, method="GET")
+            with urlopen(
+                request,
+                timeout=min(HOST_READINESS_REQUEST_TIMEOUT, remaining),
+            ) as response:
+                if response.status == 200:
+                    return
+                last_error = f"HTTP {response.status}"
+        except OSError as error:
+            last_error = str(error)
+        time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+    raise AssertionError(f"timed out waiting for code-mode host /healthz: {last_error}")
+
+
+class _LiveProcess:
+    def poll(self) -> None:
+        return None
+
+
+class _HealthResponse:
+    status = 200
+
+    def __enter__(self) -> "_HealthResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+def test_wait_for_host_ready_accepts_healthz_success_without_network() -> None:
+    with patch(f"{__name__}.urlopen", return_value=_HealthResponse()) as probe:
+        _wait_for_host_ready(_LiveProcess(), "http://127.0.0.1:43123")
+
+    probe.assert_called_once()
+    assert probe.call_args.args[0].full_url == "http://127.0.0.1:43123/healthz"
+
+
+def test_wait_for_host_ready_retries_transient_failure_without_network() -> None:
+    with patch(
+        f"{__name__}.urlopen",
+        side_effect=[OSError("connection refused"), _HealthResponse()],
+    ) as probe:
+        _wait_for_host_ready(_LiveProcess(), "http://127.0.0.1:43123")
+
+    assert probe.call_count == 2
+
+
+def test_wait_for_host_ready_reports_timeout_without_network() -> None:
+    with (
+        patch(
+            f"{__name__}.urlopen", side_effect=OSError("connection refused")
+        ) as probe,
+        pytest.raises(AssertionError, match="timed out.*connection refused"),
+    ):
+        _wait_for_host_ready(
+            _LiveProcess(),
+            "http://127.0.0.1:43123",
+            timeout=0.02,
+            interval=0.001,
+        )
+
+    assert probe.call_count > 1
+
+
 def _start_host(host: Path) -> tuple[subprocess.Popen[bytes], str]:
     process = subprocess.Popen(
         [str(host), "--listen", "grpc://127.0.0.1:0"],
@@ -189,7 +299,21 @@ def _start_host(host: Path) -> tuple[subprocess.Popen[bytes], str]:
         stderr=subprocess.PIPE,
     )
     assert process.stdout is not None
-    return process, _read_line(process.stdout)
+    try:
+        host_url = _read_line(process.stdout)
+        _wait_for_host_ready(process, host_url)
+        return process, host_url
+    except AssertionError as error:
+        stderr = _read_available(process.stderr)
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        stderr = "\n".join(filter(None, (stderr, _read_available(process.stderr))))
+        detail = stderr or "<empty>"
+        raise AssertionError(f"{error}; code-mode host stderr: {detail}") from error
 
 
 def _stage_stdio_pair(codex: Path, host: Path, home: Path) -> Path:
@@ -279,12 +403,15 @@ def test_candidate_cli_executes_code_through_official_host(transport: str) -> No
             try:
                 _exercise_app(app_process, workspace)
             except AssertionError as error:
-                if app_process.poll() is not None and app_process.stderr is not None:
-                    detail = app_process.stderr.read().decode(errors="replace").strip()
-                    raise AssertionError(
-                        f"{error}; app-server stderr: {detail}"
-                    ) from error
-                raise
+                diagnostics = [
+                    f"app-server stderr: {_read_available(app_process.stderr) or '<empty>'}"
+                ]
+                if host_process is not None:
+                    diagnostics.append(
+                        "code-mode host stderr: "
+                        f"{_read_available(host_process.stderr) or '<empty>'}"
+                    )
+                raise AssertionError(f"{error}; {'; '.join(diagnostics)}") from error
             assert len(server.requests) == 2
             assert "co-cli-host-integration" in json.dumps(server.requests[1])
         finally:
