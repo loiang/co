@@ -9,7 +9,13 @@ import pytest
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "co"))
 
-from common import LifecycleError, git_flake, require_no_untracked  # noqa: E402
+from common import (  # noqa: E402
+    LifecycleError,
+    OutputMode,
+    git_flake,
+    require_no_untracked,
+    run,
+)
 
 
 def _git(root: Path, *args: str) -> None:
@@ -41,3 +47,50 @@ def test_lifecycle_has_no_raw_local_path_flake_inputs() -> None:
     modules = tuple((ROOT / "scripts/co").glob("*.py"))
 
     assert not any('f"path:' in path.read_text(encoding="utf-8") for path in modules)
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_stdout_capture_streams_diagnostics(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str], exit_code: int
+) -> None:
+    command = [sys.executable, "-c", (
+        "import sys; print('/nix/store/result'); "
+        f"print('build progress', file=sys.stderr); sys.exit({exit_code})"
+    )]
+    if exit_code:
+        with pytest.raises(LifecycleError, match="命令失败"):
+            run(command, cwd=tmp_path, capture=OutputMode.CAPTURE_STDOUT)
+    else:
+        result = run(command, cwd=tmp_path, capture=OutputMode.CAPTURE_STDOUT)
+        assert result.stdout == "/nix/store/result\n"
+        assert result.stderr is None
+    assert capfd.readouterr() == ("", "build progress\n")
+
+
+def test_default_capture_preserves_machine_output(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    result = run(
+        [
+            sys.executable, "-c",
+            "import sys; print('value'); print('detail', file=sys.stderr)",
+        ],
+        cwd=tmp_path,
+    )
+    assert (result.stdout, result.stderr) == ("value\n", "detail\n")
+    assert capfd.readouterr() == ("", "")
+
+
+def test_inherited_output_reaches_terminal(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    result = run(
+        [
+            sys.executable, "-c",
+            "import sys; print('progress'); print('detail', file=sys.stderr)",
+        ],
+        cwd=tmp_path,
+        capture=OutputMode.INHERIT,
+    )
+    assert (result.stdout, result.stderr) == (None, None)
+    assert capfd.readouterr() == ("progress\n", "detail\n")

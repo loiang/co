@@ -7,6 +7,7 @@ from typing import Any
 
 from common import (
     LifecycleError,
+    OutputMode,
     git_flake,
     require_repo,
     run,
@@ -28,6 +29,7 @@ def build_official_host(root: Path, ni_repository: Path) -> str:
             "--no-write-lock-file",
         ],
         cwd=root,
+        capture=OutputMode.CAPTURE_STDOUT,
     )
     outputs = tuple(line for line in (result.stdout or "").splitlines() if line)
     if len(outputs) != 1:

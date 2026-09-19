@@ -5,12 +5,13 @@ in a new worktree and merges upstream history, preserving customization commits.
 """
 
 import re
-import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from _git_merge import CandidateConflict as CandidateConflict
+from _git_merge import _merge_upstream
 from common import (
     LifecycleError,
     git,
@@ -43,10 +44,6 @@ class Candidate:
     changed: bool
 
 
-class CandidateConflict(LifecycleError):
-    """Preserve a conflicted merge and expose deterministic continuation steps."""
-
-
 def _succeeds(root: Path, *args: str) -> bool:
     result = subprocess.run(
         ["git", "-C", str(root), *args],
@@ -72,7 +69,7 @@ def _recorded_upstream(root: Path) -> str:
 
 
 def _resolve_target(root: Path, revision: str) -> str:
-    git(root, "fetch", "--prune", "upstream")
+    git(root, "fetch", "--prune", "upstream", capture=False)
     target = git(root, "rev-parse", f"{revision}^{{commit}}")
     if not SHA_RE.fullmatch(target):
         raise LifecycleError(f"目标 revision 未解析为完整 Git SHA: {target}")
@@ -90,56 +87,6 @@ def _candidate_identity(root: Path, target: str, created_at: str) -> tuple[str, 
     if worktree.exists():
         raise LifecycleError(f"candidate worktree 已存在，拒绝覆盖: {worktree}")
     return branch, worktree
-
-
-def _merge_upstream(
-    source_root: Path,
-    source_head: str,
-    candidate: Candidate,
-    ni_repository: Path,
-    build_cores: int,
-) -> None:
-    candidate.root.parent.mkdir(parents=True, exist_ok=True)
-    git(
-        source_root,
-        "worktree",
-        "add",
-        "-b",
-        candidate.branch,
-        str(candidate.root),
-        source_head,
-    )
-    result = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(candidate.root),
-            "merge",
-            "--no-edit",
-            candidate.upstream_rev,
-        ],
-        cwd=candidate.root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if not result.returncode:
-        return
-    detail = (result.stderr or result.stdout or "").strip()
-    quoted_worktree = shlex.quote(str(candidate.root))
-    quoted_target = shlex.quote(candidate.upstream_rev)
-    candidate_cli = shlex.quote(str(candidate.root / "scripts/co/cli.py"))
-    command = (
-        f"GIT_EDITOR=true git -C {quoted_worktree} merge --continue\n"
-        f"python3 {candidate_cli} upgrade-finalize --repo {quoted_worktree} "
-        f"--upstream-rev {quoted_target} "
-        f"--ni-repo {shlex.quote(str(ni_repository.resolve()))} "
-        f"--cores {build_cores}"
-    )
-    raise CandidateConflict(
-        f"upstream merge 冲突；worktree 已保留: {candidate.root}\n"
-        f"{detail}\n续做命令:\n{command}"
-    )
 
 
 def create_upgrade_candidate(

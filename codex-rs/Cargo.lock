@@ -4365,6 +4365,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-repo"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "codex-utils-cargo-bin",
+ "pretty_assertions",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "codex-response-debug-context"
 version = "0.0.0"
 dependencies = [

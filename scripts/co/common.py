@@ -10,6 +10,7 @@ import os
 import subprocess
 import tempfile
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +23,19 @@ class LifecycleError(RuntimeError):
     """
 
 
+class OutputMode(Enum):
+    """Choose inherited diagnostics independently from machine-readable stdout."""
+
+    CAPTURE = "capture"
+    CAPTURE_STDOUT = "capture_stdout"
+    INHERIT = "inherit"
+
+
 def run(
     command: list[str],
     *,
     cwd: Path,
-    capture: bool = True,
+    capture: bool | OutputMode = True,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run one command and raise a diagnostic failure without shell parsing.
@@ -34,7 +43,7 @@ def run(
     Args:
         command: Argument vector passed directly to the child process.
         cwd: Explicit working directory that owns the operation.
-        capture: Capture output when the caller must parse it.
+        capture: Output policy; legacy booleans capture both streams or neither.
         env: Optional complete child environment.
 
     Returns:
@@ -47,7 +56,16 @@ def run(
         command,
         cwd=cwd,
         check=False,
-        capture_output=capture,
+        stdout=(
+            subprocess.PIPE
+            if capture is not False and capture is not OutputMode.INHERIT
+            else None
+        ),
+        stderr=(
+            subprocess.PIPE
+            if capture is True or capture is OutputMode.CAPTURE
+            else None
+        ),
         text=True,
         env=env,
     )

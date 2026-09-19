@@ -1,0 +1,22 @@
+[package]
+name = "codex-repo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "repo"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+codex-utils-cargo-bin = { workspace = true }
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
