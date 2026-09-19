@@ -27,7 +27,10 @@ ARCHIVE_NAME = "bwrap-x86_64-unknown-linux-musl.tar.gz"
 
 
 def _archive_bytes(
-    *, name: str = "bwrap", mode: int = 0o755, extra: bool = False
+    *,
+    name: str = "bwrap-x86_64-unknown-linux-musl",
+    mode: int = 0o755,
+    extra: bool = False,
 ) -> bytes:
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
@@ -154,6 +157,25 @@ def test_download_rejects_size_and_digest_tampering(tmp_path: Path) -> None:
         pytest.raises(LifecycleError, match="size/digest"),
     ):
         fetch_bwrap_binary(wrong_size, cache_root=tmp_path)
+
+
+def test_extracts_member_named_after_verified_asset(tmp_path: Path) -> None:
+    archive = _archive_bytes()
+    asset = _asset(archive)
+
+    with patch("bwrap.urlopen", return_value=io.BytesIO(archive)):
+        binary = fetch_bwrap_binary(asset, cache_root=tmp_path)
+
+    assert binary.read_bytes() == b"bwrap\n"
+
+
+def test_rejects_legacy_bare_bwrap_member(tmp_path: Path) -> None:
+    archive = _archive_bytes(name="bwrap")
+    asset = _asset(archive)
+
+    with pytest.raises(LifecycleError, match="普通可执行"):
+        with patch("bwrap.urlopen", return_value=io.BytesIO(archive)):
+            fetch_bwrap_binary(asset, cache_root=tmp_path)
 
 
 @pytest.mark.parametrize(
