@@ -97,7 +97,8 @@ def fetch_bwrap_binary(asset: BwrapAsset, *, cache_root: Path | None = None) -> 
     # Always derive the executable again from the verified archive. A cached
     # executable can be modified independently while retaining its mode/size;
     # re-extraction keeps the archive digest as the sole trust boundary.
-    extract_single_executable(archive, binary, "bwrap")
+    expected_name = asset.name.removesuffix(".tar.gz")
+    extract_single_executable(archive, binary, expected_name)
     return binary
 
 
