@@ -1,5 +1,6 @@
 """Cargo builds for source-built Codex package artifacts."""
 
+import hashlib
 import os
 import subprocess
 from dataclasses import dataclass
@@ -65,10 +66,16 @@ def build_source_binaries(
             cmd.extend(["--bin", binary])
 
         cargo_env = None
-        if entrypoint_bin is None or code_mode_host_bin is None:
-            codex_v8_env = resolve_codex_v8_cargo_env(spec)
-            if codex_v8_env:
-                cargo_env = {**os.environ, **codex_v8_env}
+        if (
+            entrypoint_bin is None
+            or code_mode_host_bin is None
+            or bwrap_bin is not None
+        ):
+            cargo_env = dict(os.environ)
+            if bwrap_bin is not None:
+                cargo_env["CODEX_BWRAP_SHA256"] = _sha256_file(bwrap_bin)
+            if entrypoint_bin is None or code_mode_host_bin is None:
+                cargo_env.update(resolve_codex_v8_cargo_env(spec))
 
         print("+", " ".join(cmd))
         subprocess.run(
@@ -193,3 +200,12 @@ def validate_source_outputs(outputs: SourceBuildOutputs) -> None:
     ]:
         if path is not None and not path.is_file():
             raise RuntimeError(f"cargo build did not produce expected binary: {path}")
+
+
+def _sha256_file(path: Path) -> str:
+    """Hash the prebuilt bwrap passed to Cargo's compile-time digest pin."""
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
