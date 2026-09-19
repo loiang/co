@@ -1,0 +1,17 @@
+### Why
+
+`co build` 已改为直接调用官方 Cargo package builder，但 NixOS 宿主没有系统 OpenSSL 与 libcap 开发环境，真实 release build 会在 `openssl-sys` 或 bwrap 编译阶段失败。
+
+### Goal
+
+让 `co build` 在不调用 `nix build`、`nix eval` 或依赖系统 OpenSSL/libcap 的情况下，生成带可信 bwrap 的完整 Codex package。
+
+### Accomplished
+
+- `native-tls` 启用锁定的 vendored OpenSSL feature。
+- Linux build 按 stable Codex version 与 host architecture 获取 OpenAI 官方静态 musl bwrap release asset。
+- 绑定精确 tag、asset size 与 GitHub SHA-256，限制下载大小并安全解包唯一 executable；每次从已校验 archive 重建缓存 binary。
+- 官方 builder 接收 `--bwrap-bin`，Cargo 将实际 bwrap SHA-256 编译进 `CODEX_BWRAP_SHA256`。
+- 回归测试覆盖 dependency graph、release metadata、下载篡改、危险 archive、缓存篡改恢复及 digest pin。
+- `docs/pacth` 记录该本地自定义与 upstream merge 保护点。
+- 验证：`test/co` 137 passed；`scripts/codex_package/test_cargo.py` 7 passed；ruff 与 `git diff --check` 通过。
