@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from common import LifecycleError, OutputMode, read_json, run
+from build_tools import prepend_tool_path, resolve_make_bin
 
 _HOST_TARGET = """
 import json
@@ -63,6 +64,7 @@ def _environment(request: PackageRequest) -> dict[str, str]:
     env.pop("CARGO_BUILD_JOBS", None)
     if request.cores:
         env["CARGO_BUILD_JOBS"] = str(request.cores)
+    prepend_tool_path(env, resolve_make_bin(env))
     return env
 
 

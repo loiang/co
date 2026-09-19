@@ -136,6 +136,7 @@ def test_build_uses_official_package_and_emits_bound_assets(
 
     with (
         patch("native_package.run", side_effect=capture),
+        patch("native_package.resolve_make_bin", return_value=binary),
         patch("bwrap.resolve_bwrap_binary", return_value=binary),
         patch(
             "build.urlopen",
@@ -227,6 +228,7 @@ def test_failed_builder_never_writes_latest(source_repo: Path) -> None:
 
     with (
         patch("native_package.run", side_effect=reject),
+        patch("native_package.resolve_make_bin", return_value=source_repo / "bwrap"),
         patch("bwrap.resolve_bwrap_binary", return_value=source_repo / "bwrap"),
         patch("build._official_version", return_value="0.154.0"),
         pytest.raises(LifecycleError, match="source cargo failed"),
@@ -278,6 +280,7 @@ def test_invalid_or_unsupported_host_fails_before_build(
 
     with (
         patch("native_package.run", side_effect=capture),
+        patch("native_package.resolve_make_bin", return_value=source_repo / "make"),
         patch("build._official_version", return_value="0.154.0"),
         pytest.raises(LifecycleError),
     ):
@@ -329,6 +332,7 @@ def test_invalid_builder_output_never_emits_evidence(
 
     with (
         patch("native_package.run", side_effect=capture),
+        patch("native_package.resolve_make_bin", return_value=binary),
         patch("bwrap.resolve_bwrap_binary", return_value=binary),
         patch("build._official_version", return_value="0.154.0"),
         pytest.raises(LifecycleError, match=error),
