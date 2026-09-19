@@ -53,10 +53,14 @@ def test_lifecycle_has_no_raw_local_path_flake_inputs() -> None:
 def test_stdout_capture_streams_diagnostics(
     tmp_path: Path, capfd: pytest.CaptureFixture[str], exit_code: int
 ) -> None:
-    command = [sys.executable, "-c", (
-        "import sys; print('/nix/store/result'); "
-        f"print('build progress', file=sys.stderr); sys.exit({exit_code})"
-    )]
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import sys; print('/nix/store/result'); "
+            f"print('build progress', file=sys.stderr); sys.exit({exit_code})"
+        ),
+    ]
     if exit_code:
         with pytest.raises(LifecycleError, match="命令失败"):
             run(command, cwd=tmp_path, capture=OutputMode.CAPTURE_STDOUT)
@@ -72,7 +76,8 @@ def test_default_capture_preserves_machine_output(
 ) -> None:
     result = run(
         [
-            sys.executable, "-c",
+            sys.executable,
+            "-c",
             "import sys; print('value'); print('detail', file=sys.stderr)",
         ],
         cwd=tmp_path,
@@ -86,7 +91,8 @@ def test_inherited_output_reaches_terminal(
 ) -> None:
     result = run(
         [
-            sys.executable, "-c",
+            sys.executable,
+            "-c",
             "import sys; print('progress'); print('detail', file=sys.stderr)",
         ],
         cwd=tmp_path,

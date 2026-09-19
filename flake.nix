@@ -87,7 +87,10 @@
         {
           repo = pkgs.callPackage ./nix/repo.nix {
             inherit version;
-            source = codexSource;
+            source = nixpkgs.lib.fileset.toSource {
+              root = ./codex-rs/repo;
+              fileset = ./codex-rs/repo/src;
+            };
             backendSource = ./scripts/co;
             rustPlatform = rustPlatformFor pkgs;
           };

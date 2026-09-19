@@ -1,0 +1,15 @@
+[package]
+name = "codex-repo"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[[bin]]
+name = "repo"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = "4"
+
+[workspace]

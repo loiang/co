@@ -117,7 +117,9 @@ def test_nix_build_rejects_negative_core_limit(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("stdout", ["", "/nix/store/a\n/nix/store/b\n"])
-def test_official_host_rejects_ambiguous_store_paths(tmp_path: Path, stdout: str) -> None:
+def test_official_host_rejects_ambiguous_store_paths(
+    tmp_path: Path, stdout: str
+) -> None:
     from host_integration import build_official_host
 
     result = subprocess.CompletedProcess([], 0, stdout)
