@@ -1,0 +1,12 @@
+Why
+The custom Codex release lifecycle still invoked Nix for local packaging and exposed a `repo` command, so the requested native `co build` / `co publish` workflow could not produce upstream-compatible package artifacts directly.
+
+Goal
+Use the upstream source package builder for native host releases while retaining source identity, immutable tags, atomic publication, retry safety, and explicit protection for local customizations during upstream merges.
+
+Accomplished
+- Renamed the repository lifecycle binary to `co` and repaired Cargo, Bazel, Nix package, and test references.
+- Replaced the Nix build path with the upstream package directory/archive builder and locked grouped Cargo builds.
+- Added schema v2 native package evidence, bounded archive verification, safe extraction, and digest-bound publication retries.
+- Added real `codex.toml` merge preservation/conflict regressions and a GitBook-compatible local patch ledger.
+- Added regression coverage for tampered metadata, entrypoints, archives, checksums, paths, permissions, and release retry behavior.
