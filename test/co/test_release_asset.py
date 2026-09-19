@@ -13,9 +13,10 @@ import pytest
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "co"))
 
-from common import LifecycleError, sha256
-from native_fixtures import BINARY, make_assets
-from release_asset import (
+from common import LifecycleError, sha256  # noqa: E402
+from native_fixtures import BINARY, make_assets  # noqa: E402
+from package_verification import MAX_MEMBER_SIZE, _members  # noqa: E402
+from release_asset import (  # noqa: E402
     Artifact,
     ReleaseBundle,
     _parse_checksums,
@@ -304,6 +305,18 @@ def test_archive_metadata_must_match_manifest(tmp_path: Path) -> None:
         pass
 
 
+def test_archive_member_size_limit_uses_metadata_without_allocating_file() -> None:
+    accepted = tarfile.TarInfo("bin/codex")
+    accepted.size = 1_300_000_000
+
+    assert _members([accepted]) == [accepted]
+
+    rejected = tarfile.TarInfo("bin/codex")
+    rejected.size = MAX_MEMBER_SIZE + 1
+    with pytest.raises(LifecycleError, match="单成员大小限制"):
+        _members([rejected])
+
+
 def test_prefetch_uses_exact_urls_without_nix_and_reuses_digest_cache(
     tmp_path: Path,
 ) -> None:
@@ -361,7 +374,7 @@ def test_archive_enforces_official_resources_permissions_and_size(
         for path in sorted(package.rglob("*")):
             if mutation == "oversized" and path.name == "codex":
                 member = archive.gettarinfo(path, arcname="bin/codex")
-                member.size = 1024**3 + 1
+                member.size = 2 * 1024**3 + 1
                 archive.fileobj.write(member.tobuf())
                 break
             archive.add(path, arcname=path.relative_to(package), recursive=False)

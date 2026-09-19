@@ -15,7 +15,7 @@ from common import LifecycleError, read_json, run, sha256
 from native_package import _VALIDATE_PACKAGE
 
 MAX_PACKAGE_SIZE = 4 * 1024**3
-MAX_MEMBER_SIZE = 1024**3
+MAX_MEMBER_SIZE = 2 * 1024**3
 MAX_MEMBERS = 10000
 
 
@@ -87,10 +87,13 @@ def _members(archive: tarfile.TarFile) -> list[tarfile.TarInfo]:
             not in {"bin", "codex-resources", "codex-path", "codex-package.json"}
             or not (member.isdir() or member.isreg())
             or member.name.rstrip("/") in entries
-            or not 0 <= member.size <= MAX_MEMBER_SIZE
         ):
             raise LifecycleError(
                 f"CLI archive 含不安全路径、类型或重复项: {member.name}"
+            )
+        if not 0 <= member.size <= MAX_MEMBER_SIZE:
+            raise LifecycleError(
+                f"CLI archive member 超过单成员大小限制: {member.name}"
             )
         entries[member.name.rstrip("/")] = member
         size += member.size
