@@ -1,0 +1,4 @@
+Overall:
+- Why: gRPC code-mode host 先输出已绑定的 HTTP URL，随后才开始 serve；`_start_host` 立即返回会让 app-server 偶发连接到尚未 ready 的 host，形成启动 race。
+- Goal: 读取 URL 后通过标准库在明确 deadline 内轮询 `/healthz`，只有 HTTP 200 才启动 app；失败时同时提供 app-server 与 host stderr，且进程存活时不执行阻塞读取；stdio transport 保持原行为。
+- Accomplished: 新增有界 readiness probe、success/retry/timeout 无网络回归测试，以及基于 `select`/`os.read` 的非阻塞 stderr 诊断。验证结果：真实 gRPC 连续 3 次通过，真实 stdio 通过，全量 `test/co` 为 150 passed/2 skipped，Ruff、format 与 `git diff --check` 通过。
