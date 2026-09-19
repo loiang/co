@@ -120,6 +120,63 @@ def _extract(archive: tarfile.TarFile, directory: Path) -> None:
             raise LifecycleError("CLI archive member size 不一致")
 
 
+def extract_single_executable(
+    archive_path: Path, destination: Path, expected_name: str
+) -> None:
+    """Atomically extract one executable from a trusted tar archive.
+
+    The bwrap release is a separate upstream asset, so it cannot use the
+    complete Codex package layout validator. This narrower helper reuses the
+    same regular-file, path, size, and archive-type restrictions before writing
+    the executable into its content-addressed cache.
+
+    Args:
+        archive_path: Downloaded ``.tar.gz`` archive to validate.
+        destination: Cache path to replace atomically with the executable.
+        expected_name: The only permitted archive member name.
+
+    Raises:
+        LifecycleError: The archive is malformed, unsafe, or non-executable.
+    """
+    try:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            members = archive.getmembers()
+            if len(members) != 1:
+                raise LifecycleError("bwrap archive 必须只包含一个成员")
+            member = members[0]
+            if (
+                member.name != expected_name
+                or not member.isreg()
+                or member.size < 0
+                or member.size > MAX_MEMBER_SIZE
+                or not member.mode & 0o111
+            ):
+                raise LifecycleError("bwrap archive 成员必须是普通可执行文件")
+            source = archive.extractfile(member)
+            if source is None:
+                raise LifecycleError("bwrap archive regular member 无法读取")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                delete=False,
+            ) as output:
+                temporary = Path(output.name)
+                with source:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+                output.flush()
+                os.fsync(output.fileno())
+            if temporary.stat().st_size != member.size:
+                raise LifecycleError("bwrap archive member size 不一致")
+            temporary.chmod(0o755)
+            temporary.replace(destination)
+    except (OSError, tarfile.TarError) as error:
+        raise LifecycleError("bwrap archive 解包验证失败") from error
+    finally:
+        if "temporary" in locals():
+            temporary.unlink(missing_ok=True)
+
+
 @contextmanager
 def verified_package(
     archive_path: Path,

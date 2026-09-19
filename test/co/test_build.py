@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import tarfile
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,6 +47,34 @@ def test_official_version_resolves_latest_stable_rust_release() -> None:
     assert urlopen.call_args.args[0].full_url == (
         "https://api.github.com/repos/openai/codex/releases/latest"
     )
+
+
+def test_linux_gnu_native_tls_uses_vendored_openssl() -> None:
+    """Keep native Codex builds independent of a host OpenSSL installation."""
+    manifest = tomllib.loads(
+        (ROOT / "codex-rs/http-client/Cargo.toml").read_text(encoding="utf-8")
+    )
+    dependency = manifest["dependencies"]["native-tls"]
+    assert dependency == {"version": "0.2", "features": ["vendored"]}
+
+    tree = run(
+        [
+            "cargo",
+            "tree",
+            "--locked",
+            "--manifest-path",
+            "codex-rs/Cargo.toml",
+            "--package",
+            "codex-http-client",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "-e",
+            "features",
+        ],
+        cwd=ROOT,
+    )
+    assert 'native-tls feature "vendored"' in tree.stdout
+    assert 'openssl-sys feature "vendored"' in tree.stdout
 
 
 @pytest.mark.parametrize(
@@ -107,6 +136,7 @@ def test_build_uses_official_package_and_emits_bound_assets(
 
     with (
         patch("native_package.run", side_effect=capture),
+        patch("bwrap.resolve_bwrap_binary", return_value=binary),
         patch(
             "build.urlopen",
             return_value=io.BytesIO(
@@ -167,6 +197,8 @@ def test_build_uses_official_package_and_emits_bound_assets(
         "release",
         "--archive-output",
         str(archive),
+        "--bwrap-bin",
+        str(binary),
     ]
     assert builder_kwargs["env"]["CODEX_REPO_ROOT"] == str(source_repo)
     if cores:
@@ -195,6 +227,7 @@ def test_failed_builder_never_writes_latest(source_repo: Path) -> None:
 
     with (
         patch("native_package.run", side_effect=reject),
+        patch("bwrap.resolve_bwrap_binary", return_value=source_repo / "bwrap"),
         patch("build._official_version", return_value="0.154.0"),
         pytest.raises(LifecycleError, match="source cargo failed"),
     ):
@@ -296,6 +329,7 @@ def test_invalid_builder_output_never_emits_evidence(
 
     with (
         patch("native_package.run", side_effect=capture),
+        patch("bwrap.resolve_bwrap_binary", return_value=binary),
         patch("build._official_version", return_value="0.154.0"),
         pytest.raises(LifecycleError, match=error),
     ):

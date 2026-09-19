@@ -102,6 +102,11 @@ def build_package(request: PackageRequest) -> NativePackage:
         raise LifecycleError("Cargo cores 必须是非负整数")
     env = _environment(request)
     target, platform = _host_target(request.root, env)
+    bwrap_bin = None
+    if "-linux-" in target:
+        from bwrap import resolve_bwrap_binary
+
+        bwrap_bin = resolve_bwrap_binary(request.version, target)
     package_dir = request.output_dir / "package"
     archive = request.output_dir / (
         f"co-cli-{platform}-{request.source_rev[:10]}.tar.gz"
@@ -122,6 +127,8 @@ def build_package(request: PackageRequest) -> NativePackage:
         "--archive-output",
         str(archive),
     ]
+    if bwrap_bin is not None:
+        command.extend(["--bwrap-bin", str(bwrap_bin)])
     run(command, cwd=request.root, env=env, capture=OutputMode.INHERIT)
     run(
         [sys.executable, "-c", _VALIDATE_PACKAGE, str(package_dir), target],
