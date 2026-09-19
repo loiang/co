@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 
 from common import (
     LifecycleError,
+    OutputMode,
     git_flake,
     require_no_untracked,
     require_repo,
@@ -157,6 +158,7 @@ def _nix_build(root: Path, version: str, cores: int = 0) -> tuple[str, Path]:
                 str(cores),
             ],
             cwd=root,
+            capture=OutputMode.CAPTURE_STDOUT,
         )
     outputs = tuple(line for line in (result.stdout or "").splitlines() if line)
     if len(outputs) != 1:

@@ -92,6 +92,7 @@ members = [
     "voice-host",
     "protocol",
     "prompts",
+    "repo",
     "rollout",
     "rollout-trace",
     "rmcp-client",

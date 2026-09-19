@@ -94,7 +94,9 @@ def test_same_upstream_sha_is_a_noop(tmp_path: Path) -> None:
     assert not (checkout / ".states" / "worktrees").exists()
 
 
-def test_conflict_preserves_candidate_worktree_for_continuation(tmp_path: Path) -> None:
+def test_conflict_preserves_candidate_worktree_for_continuation(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
     upstream, checkout, _ = _repositories(tmp_path)
     _write(checkout, "shared.txt", "custom edit\n")
     _commit(checkout, "custom conflict")
@@ -113,6 +115,8 @@ def test_conflict_preserves_candidate_worktree_for_continuation(tmp_path: Path) 
     assert "python3" in message
     assert "scripts/co/cli.py upgrade-finalize" in message
     assert "--cores 4" in message
+    assert "CONFLICT" in capfd.readouterr().out
+    assert _git(matching[0], "rev-parse", "--verify", "MERGE_HEAD")
 
 
 def test_finalize_locks_without_unscoped_flake_update(tmp_path: Path) -> None:
@@ -169,3 +173,34 @@ def test_candidate_validation_passes_build_core_limit(tmp_path: Path) -> None:
     )
     build_command = next(command for command in commands if "build" in command)
     assert build_command[-2:] == ["--cores", "4"]
+
+
+def test_fetch_inherits_output_and_revision_query_remains_captured(tmp_path: Path) -> None:
+    from git_lifecycle import _resolve_target
+
+    revision = "a" * 40
+    with patch("common.subprocess.run") as process:
+        process.side_effect = [
+            subprocess.CompletedProcess([], 0),
+            subprocess.CompletedProcess([], 0, revision + "\n"),
+            subprocess.CompletedProcess([], 0),
+        ]
+        assert _resolve_target(tmp_path, "upstream/main") == revision
+    fetch, query, _ancestry = process.call_args_list
+    assert (fetch.kwargs["stdout"], fetch.kwargs["stderr"]) == (None, None)
+    assert (query.kwargs["stdout"], query.kwargs["stderr"]) == (
+        subprocess.PIPE, subprocess.PIPE
+    )
+
+
+def test_failed_merge_without_merge_state_does_not_offer_continue(tmp_path: Path) -> None:
+    from common import LifecycleError
+    from git_lifecycle import _merge_upstream
+
+    _, checkout, baseline = _repositories(tmp_path)
+    candidate = Candidate(tmp_path / "candidate", "upgrade/invalid", "f" * 40, True)
+    with pytest.raises(LifecycleError, match="upstream merge 失败") as captured:
+        _merge_upstream(checkout, baseline, candidate, tmp_path, 0)
+    assert not isinstance(captured.value, CandidateConflict)
+    assert "merge --continue" not in str(captured.value)
+    assert candidate.root.is_dir()

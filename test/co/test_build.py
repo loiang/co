@@ -11,6 +11,7 @@ import pytest
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "co"))
 
+from common import OutputMode  # noqa: E402
 from build import _nix_build, _official_version  # noqa: E402
 from common import LifecycleError  # noqa: E402
 
@@ -84,6 +85,7 @@ def test_nix_build_uses_all_cores_for_one_derivation(tmp_path: Path) -> None:
             "0",
         ],
         cwd=tmp_path,
+        capture=OutputMode.CAPTURE_STDOUT,
     )
 
 
@@ -110,3 +112,22 @@ def test_nix_build_rejects_negative_core_limit(tmp_path: Path) -> None:
         _nix_build(tmp_path, "0.154.0", cores=-1)
 
     run.assert_not_called()
+
+
+@pytest.mark.parametrize("stdout", ["", "/nix/store/a\n/nix/store/b\n"])
+def test_official_host_rejects_ambiguous_store_paths(tmp_path: Path, stdout: str) -> None:
+    from host_integration import build_official_host
+
+    result = subprocess.CompletedProcess([], 0, stdout)
+    with patch("host_integration.run", return_value=result):
+        with pytest.raises(LifecycleError, match="单一 store path"):
+            build_official_host(tmp_path, tmp_path)
+
+
+def test_official_host_captures_path_and_streams_diagnostics(tmp_path: Path) -> None:
+    from host_integration import build_official_host
+
+    result = subprocess.CompletedProcess([], 0, "/nix/store/host\n")
+    with patch("host_integration.run", return_value=result) as run:
+        assert build_official_host(tmp_path, tmp_path) == "/nix/store/host"
+    assert run.call_args.kwargs["capture"] is OutputMode.CAPTURE_STDOUT

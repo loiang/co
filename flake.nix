@@ -85,6 +85,12 @@
           );
         in
         {
+          repo = pkgs.callPackage ./nix/repo.nix {
+            inherit version;
+            source = codexSource;
+            backendSource = ./scripts/co;
+            rustPlatform = rustPlatformFor pkgs;
+          };
           codex-rs = upstreamCodexRs;
           default = upstreamCodexRs;
         }
