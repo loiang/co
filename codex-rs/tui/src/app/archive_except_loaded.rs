@@ -3,7 +3,6 @@ use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadLoadedListResponse;
 use codex_protocol::ThreadId;
 use std::collections::HashSet;
-use std::str::FromStr;
 
 pub(super) async fn load_all_loaded_thread_ids(
     app_server: &mut AppServerSession,
@@ -34,7 +33,7 @@ struct LoadedThreadCollector {
 impl LoadedThreadCollector {
     fn accept_page(&mut self, page: ThreadLoadedListResponse) -> Result<Option<String>, String> {
         for raw_thread_id in page.data {
-            let thread_id = ThreadId::from_str(&raw_thread_id)
+            let thread_id = ThreadId::from_string(&raw_thread_id)
                 .map_err(|_| "the app server returned an invalid loaded thread id".to_string())?;
             self.thread_ids.insert(thread_id);
         }
