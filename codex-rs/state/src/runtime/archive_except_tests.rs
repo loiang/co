@@ -18,6 +18,8 @@ use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use uuid::Uuid;
 
+const FIXTURE_CREATED_AT_MS_BASE: i64 = 1_700_000_000_000;
+
 fn thread_id(value: u128) -> ThreadId {
     ThreadId::from_string(&Uuid::from_u128(value).to_string()).expect("valid thread id")
 }
@@ -29,13 +31,14 @@ async fn runtime_with_threads(thread_ids: &[ThreadId]) -> Result<std::sync::Arc<
         "test-provider".to_string(),
     )
     .await?;
-    for (created_at_ms, &id) in thread_ids.iter().enumerate() {
+    for (index, &id) in thread_ids.iter().enumerate() {
+        let created_at_ms = FIXTURE_CREATED_AT_MS_BASE + index as i64;
         let mut metadata = test_thread_metadata(&codex_home, id, codex_home.clone());
         metadata.created_at =
-            chrono::DateTime::from_timestamp_millis(created_at_ms as i64).expect("valid timestamp");
+            chrono::DateTime::from_timestamp_millis(created_at_ms).expect("valid timestamp");
         runtime.upsert_thread(&metadata).await?;
         sqlx::query("UPDATE threads SET created_at_ms = ? WHERE id = ?")
-            .bind(created_at_ms as i64)
+            .bind(created_at_ms)
             .bind(id.to_string())
             .execute(runtime.pool.as_ref())
             .await?;
