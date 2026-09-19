@@ -1,0 +1,17 @@
+### Why
+
+The repository governance binary had no self-install path. Developers had to invoke a checkout-local debug binary, and its Python backend discovery depended on the current repository.
+
+### Goal
+
+Provide `co sync` as a locked release build and atomic PATH synchronization command for the `codex-repo` governance package only.
+
+### Accomplished
+
+- Add a Rust-local `sync` subcommand that builds `-p codex-repo --bin co` with `--release --locked`.
+- Reuse `/repo/ni` generation semantics under `$HOME/.local/share/co`, with atomic `active` and `$HOME/.local/bin/co` symlinks.
+- Reject foreign destinations and active targets; clean failed staging/generations; avoid duplicate generations for identical binary and metadata.
+- Store canonical source/backend metadata beside the installed binary so commands and later syncs work from `/repo/ni` or any other cwd.
+- Preserve `REPO_BACKEND_PATH` / `REPO_PYTHON` overrides and source-checkout fallback.
+- Keep the isolated `nix/repo-cargo` mirror locks synchronized and document the local merge protection in `docs/pacth`.
+- Validation: 10 unit and 7 integration tests passed; binary clippy, locked release build, rustfmt and `git diff --check` passed; temporary-HOME sync and repeat sync from `/repo/ni` succeeded.
