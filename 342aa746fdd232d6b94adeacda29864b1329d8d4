@@ -1,0 +1,17 @@
+### Why
+
+The V8 downloader fetched the checksum manifest on every package build. Two GitHub connection resets therefore stopped `co build` even though the local manifest, archive and binding already matched the repository trust pin.
+
+### Goal
+
+Make verified V8 caches usable offline and make incomplete cache downloads resilient without weakening the repository-pinned trust boundary.
+
+### Accomplished
+
+- Authenticate the cached manifest and both artifacts before any network access.
+- Download missing or corrupt entries into unique sibling temporary files and replace formal cache files only after validation.
+- Preserve existing formal files on failures and clean temporary files.
+- Retry reset, timeout, 408/429/5xx and downloaded checksum failures at most three times with injectable exponential backoff; reject deterministic HTTP failures immediately.
+- Add regressions for offline hits, reset/checksum recovery, preservation/cleanup, retry bounds and HTTP classification.
+- Document the V8 cache merge protection in `docs/pacth`.
+- Validation: V8 tests 10/10, codex_package tests 27/27 and `git diff --check` passed.
