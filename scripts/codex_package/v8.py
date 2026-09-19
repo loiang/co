@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
 import shutil
 import tempfile
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 from .targets import REPO_ROOT, TargetSpec
 
 DOWNLOAD_TIMEOUT_SECS = 120
+MAX_DOWNLOAD_ATTEMPTS = 3
+RETRY_BACKOFF_SECS = 0.25
 V8_ARTIFACT_PROFILE = "ptrcomp_sandbox_release"
+
+Sleep = Callable[[float], None]
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,7 @@ def resolve_codex_v8_cargo_env(
     environ: Mapping[str, str] | None = None,
     cache_root: Path | None = None,
 ) -> dict[str, str]:
+    """Returns Cargo overrides for the verified Codex-built V8 artifacts."""
     environ = os.environ if environ is None else environ
     if environ.get("V8_FROM_SOURCE") in {"true", "1", "yes"}:
         return {}
@@ -54,7 +62,19 @@ def fetch_codex_v8_artifacts(
     *,
     version: str | None = None,
     cache_root: Path | None = None,
+    sleep: Sleep | None = None,
+    max_attempts: int = MAX_DOWNLOAD_ATTEMPTS,
 ) -> RustyV8ArtifactPair:
+    """Loads a pinned V8 artifact pair, downloading only invalid cache entries.
+
+    The checksum manifest is authenticated by a repository pin before any
+    network operation. Complete cache hits therefore stay offline, while every
+    downloaded file is validated in a unique sibling temporary file before it
+    can replace a formal cache entry.
+    """
+    if not 1 <= max_attempts <= MAX_DOWNLOAD_ATTEMPTS:
+        raise ValueError(f"max_attempts must be between 1 and {MAX_DOWNLOAD_ATTEMPTS}")
+    sleep = time.sleep if sleep is None else sleep
     version = version or resolved_v8_crate_version()
     release_url = (
         f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}"
@@ -73,20 +93,38 @@ def fetch_codex_v8_artifacts(
     binding = cache_dir / binding_name
     checksums = cache_dir / checksums_name
 
-    download_file(f"{release_url}/{checksums.name}", checksums)
-    verify_release_checksum_manifest(checksums, version=version)
-    expected_checksums = load_checksums(checksums, {archive.name, binding.name})
+    trusted_manifest_checksum(checksums.name, version=version)
+    expected_checksums = _cached_checksums(
+        checksums, version=version, artifact_names={archive.name, binding.name}
+    )
+    if expected_checksums is None:
+        _download_verified(
+            f"{release_url}/{checksums.name}",
+            checksums,
+            lambda path: _validate_manifest(
+                path,
+                version=version,
+                manifest_name=checksums.name,
+                artifact_names={archive.name, binding.name},
+            ),
+            sleep=sleep,
+            max_attempts=max_attempts,
+        )
+        expected_checksums = load_checksums(checksums, {archive.name, binding.name})
     for artifact in [archive, binding]:
         ensure_valid_artifact(
             artifact,
             expected_checksums[artifact.name],
             f"{release_url}/{artifact.name}",
+            sleep=sleep,
+            max_attempts=max_attempts,
         )
 
     return RustyV8ArtifactPair(archive=archive, binding=binding)
 
 
 def resolved_v8_crate_version() -> str:
+    """Reads the single V8 crate version resolved by the repository lockfile."""
     import tomllib
 
     cargo_lock = tomllib.loads((REPO_ROOT / "codex-rs" / "Cargo.lock").read_text())
@@ -105,10 +143,21 @@ def resolved_v8_crate_version() -> str:
 
 
 def default_cache_root() -> Path:
+    """Returns the process-shared cache root used by package builds."""
     return Path(tempfile.gettempdir()) / "codex-package"
 
 
 def verify_release_checksum_manifest(checksums_path: Path, *, version: str) -> None:
+    """Verifies a downloaded manifest against the repository's trusted pin."""
+    expected = trusted_manifest_checksum(checksums_path.name, version=version)
+    if not has_checksum(checksums_path, expected):
+        raise RuntimeError(
+            f"V8 checksum manifest {checksums_path} does not match its trusted SHA-256."
+        )
+
+
+def trusted_manifest_checksum(name: str, *, version: str) -> str:
+    """Returns the pinned digest for a release manifest or raises if absent."""
     version_suffix = version.replace(".", "_")
     trusted_checksums = (
         REPO_ROOT
@@ -118,23 +167,51 @@ def verify_release_checksum_manifest(checksums_path: Path, *, version: str) -> N
     )
 
     for line in trusted_checksums.read_text(encoding="utf-8").splitlines():
-        digest, artifact_name = line.split(maxsplit=1)
-        if artifact_name != checksums_path.name:
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            raise RuntimeError(f"Invalid trusted V8 checksum line: {line!r}")
+        digest, artifact_name = parts
+        if artifact_name != name:
             continue
-        if has_checksum(checksums_path, digest):
-            return
-
-        checksums_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"V8 checksum manifest {checksums_path} does not match its trusted SHA-256."
-        )
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise RuntimeError(f"Invalid trusted V8 checksum digest: {digest}")
+        return digest
 
     raise RuntimeError(
-        f"V8 checksum manifest {checksums_path.name} has no trusted SHA-256 for {version}."
+        f"V8 checksum manifest {name} has no trusted SHA-256 for {version}."
     )
 
 
+def _cached_checksums(
+    checksums_path: Path, *, version: str, artifact_names: set[str]
+) -> dict[str, str] | None:
+    try:
+        verify_release_checksum_manifest(checksums_path, version=version)
+        return load_checksums(checksums_path, artifact_names)
+    except (FileNotFoundError, RuntimeError):
+        return None
+
+
+def _validate_manifest(
+    path: Path,
+    *,
+    version: str,
+    manifest_name: str,
+    artifact_names: set[str],
+) -> None:
+    try:
+        expected = trusted_manifest_checksum(manifest_name, version=version)
+        if not has_checksum(path, expected):
+            raise RuntimeError(
+                f"V8 checksum manifest {path} does not match its trusted SHA-256."
+            )
+        load_checksums(path, artifact_names)
+    except (FileNotFoundError, RuntimeError) as error:
+        raise _DownloadedValidationError(str(error)) from error
+
+
 def load_checksums(checksums_path: Path, artifact_names: set[str]) -> dict[str, str]:
+    """Parses an exact two-entry release checksum manifest."""
     checksums: dict[str, str] = {}
     lines = checksums_path.read_text(encoding="utf-8").splitlines()
     if len(lines) != len(artifact_names):
@@ -167,22 +244,97 @@ def load_checksums(checksums_path: Path, artifact_names: set[str]) -> dict[str, 
     return checksums
 
 
-def ensure_valid_artifact(artifact: Path, checksum: str, url: str) -> None:
+def ensure_valid_artifact(
+    artifact: Path,
+    checksum: str,
+    url: str,
+    *,
+    sleep: Sleep | None = None,
+    max_attempts: int = MAX_DOWNLOAD_ATTEMPTS,
+) -> None:
+    """Keeps a valid artifact or atomically replaces it with a verified download."""
     if has_checksum(artifact, checksum):
         return
 
-    artifact.unlink(missing_ok=True)
-    download_file(url, artifact)
-    if has_checksum(artifact, checksum):
-        return
+    _download_verified(
+        url,
+        artifact,
+        lambda path: _validate_artifact(path, checksum),
+        sleep=time.sleep if sleep is None else sleep,
+        max_attempts=max_attempts,
+    )
 
-    artifact.unlink(missing_ok=True)
-    raise RuntimeError(
-        f"Codex-built V8 artifact {artifact} failed checksum validation."
+
+class _DownloadedValidationError(RuntimeError):
+    """Marks a downloaded file that failed a trusted content validation."""
+
+
+def _validate_artifact(path: Path, checksum: str) -> None:
+    if not has_checksum(path, checksum):
+        raise _DownloadedValidationError(
+            "Codex-built V8 artifact failed checksum validation."
+        )
+
+
+def _download_verified(
+    url: str,
+    destination: Path,
+    validator: Callable[[Path], None],
+    *,
+    sleep: Sleep,
+    max_attempts: int,
+) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    last_error: Exception | None = None
+    for attempt in range(max_attempts):
+        temporary = _temporary_path(destination)
+        try:
+            _download_once(url, temporary)
+            validator(temporary)
+            temporary.replace(destination)
+            return
+        except Exception as error:
+            last_error = error
+            if not _retryable(error) or attempt == max_attempts - 1:
+                raise
+            sleep(RETRY_BACKOFF_SECS * (2**attempt))
+        finally:
+            temporary.unlink(missing_ok=True)
+    assert last_error is not None
+    raise last_error
+
+
+def _temporary_path(destination: Path) -> Path:
+    descriptor, path = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    os.close(descriptor)
+    return Path(path)
+
+
+def _download_once(url: str, destination: Path) -> None:
+    with urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECS) as response:
+        with destination.open("wb") as output:
+            shutil.copyfileobj(response, output)
+
+
+def _retryable(error: Exception) -> bool:
+    if isinstance(error, HTTPError):
+        return error.code in {408, 429} or 500 <= error.code <= 599
+    return isinstance(
+        error,
+        (
+            _DownloadedValidationError,
+            TimeoutError,
+            socket.timeout,
+            ConnectionResetError,
+            URLError,
+        ),
     )
 
 
 def has_checksum(path: Path, expected: str) -> bool:
+    """Checks a regular file's SHA-256 without changing it."""
     if not path.is_file():
         return False
 
@@ -194,13 +346,11 @@ def has_checksum(path: Path, expected: str) -> bool:
 
 
 def download_file(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = dest.with_suffix(f"{dest.suffix}.tmp")
-    temp_path.unlink(missing_ok=True)
-    try:
-        with urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECS) as response:
-            with temp_path.open("wb") as output:
-                shutil.copyfileobj(response, output)
-        temp_path.replace(dest)
-    finally:
-        temp_path.unlink(missing_ok=True)
+    """Downloads an unvalidated file using the same bounded atomic transport."""
+    _download_verified(
+        url,
+        dest,
+        lambda _path: None,
+        sleep=time.sleep,
+        max_attempts=MAX_DOWNLOAD_ATTEMPTS,
+    )
