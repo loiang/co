@@ -79,6 +79,10 @@ mod page_loading;
 #[path = "resume_picker_color_tests.rs"]
 mod color_tests;
 
+#[cfg(test)]
+#[path = "resume_picker/source_policy_tests.rs"]
+mod source_policy_tests;
+
 use page_loading::PageCwdFilter;
 use page_loading::PageLoadMode;
 use page_loading::PaginationState;

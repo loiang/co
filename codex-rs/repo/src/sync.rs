@@ -1,10 +1,15 @@
 use crate::backend;
-use crate::backend_metadata::{self, BackendMetadata};
-use anyhow::{Context, Result, bail};
+use crate::backend_metadata::BackendMetadata;
+use crate::backend_metadata::{self};
+use anyhow::Context;
+use anyhow::Result;
+use anyhow::bail;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 const BINARY: &str = "co";
 
@@ -253,10 +258,15 @@ compile_error!("co sync 需要 Unix symlink 支持");
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandRunner, SyncPaths, build_command, execute_with, install};
+    use super::CommandRunner;
+    use super::SyncPaths;
+    use super::build_command;
+    use super::execute_with;
+    use super::install;
     use std::cell::RefCell;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     struct FakeRunner {

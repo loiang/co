@@ -1,7 +1,11 @@
-use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use anyhow::Context;
+use anyhow::Result;
+use anyhow::bail;
+use serde::Deserialize;
+use serde::Serialize;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 pub(crate) const FILE_NAME: &str = "co-backend.json";
 
