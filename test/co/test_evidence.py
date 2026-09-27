@@ -122,14 +122,18 @@ def test_package_directory_must_be_root_relative(tmp_path: Path, path: str) -> N
         verify_build_record(root, record)
 
 
-def test_host_evidence_must_bind_same_manifest(tmp_path: Path) -> None:
+def test_publish_ignores_stale_host_evidence(tmp_path: Path) -> None:
     root, _ = _records(tmp_path)
     path = root / ".states/co/host-integration/latest.json"
     record = json.loads(path.read_text())
-    record["manifestSha256"] = "0" * 64
+    record["sourceRev"] = "0" * 40
     write_json(path, record)
-    with pytest.raises(LifecycleError, match="host integration evidence"):
-        require_release_records(root)
+
+    with (
+        patch("publication._require_origin"),
+        patch("publication.ensure_release"),
+    ):
+        publish(root, dry_run=True)
 
 
 def test_publication_still_requires_clean_source(tmp_path: Path) -> None:

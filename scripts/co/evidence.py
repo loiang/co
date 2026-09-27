@@ -125,26 +125,12 @@ def verify_build_record(root: Path, record: dict[str, Any]) -> Path:
 
 
 def require_release_records(repository: Path) -> tuple[Path, ...]:
-    """Validate clean source-bound build and host integration evidence."""
+    """Validate clean source-bound build evidence required for publication."""
     root = require_repo(repository)
     identity = source_identity(root)
     if identity["dirty"]:
         raise LifecycleError("发布要求 clean candidate worktree")
     build_record = read_build_record(root, identity)
-    host_record = _require_record_identity(
-        root, ".states/co/host-integration/latest.json", identity
-    )
-    if host_record.get("manifestSha256") != build_record.get("manifestSha256"):
-        raise LifecycleError(
-            "host integration evidence 与 native build manifest 不一致"
-        )
-    host_binary = Path(str(host_record.get("officialHostStorePath", ""))) / (
-        "bin/codex-code-mode-host"
-    )
-    if not host_binary.is_file() or sha256(host_binary) != host_record.get(
-        "officialHostSha256"
-    ):
-        raise LifecycleError("official host artifact checksum 不一致")
     assets = _asset_paths(root, build_record)
     verify_build_record(root, build_record)
     return assets
