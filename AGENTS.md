@@ -1,3 +1,9 @@
+当前 main push的是 origin/main（loiang/co）
+origin	git@github.com:loiang/co.git (fetch)
+origin	git@github.com:loiang/co.git (push)
+获取pull可以使用
+upstream	https://github.com/openai/codex.git (fetch)
+upstream	https://github.com/openai/codex.git (push)
 # Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
