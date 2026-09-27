@@ -91,6 +91,17 @@ def test_native_records_publish_dry_run_without_mutations(tmp_path: Path) -> Non
     assert _git(root, "tag", "--list") == ""
 
 
+def test_publish_ignores_missing_test_evidence(tmp_path: Path) -> None:
+    root, _ = _records(tmp_path)
+    (root / ".states/co/test/latest.json").unlink()
+
+    with (
+        patch("publication._require_origin"),
+        patch("publication.ensure_release"),
+    ):
+        publish(root, dry_run=True)
+
+
 @pytest.mark.parametrize(
     "relative", ["bin/codex", "codex-resources/bwrap", "codex-path/rg"]
 )

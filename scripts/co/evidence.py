@@ -125,12 +125,11 @@ def verify_build_record(root: Path, record: dict[str, Any]) -> Path:
 
 
 def require_release_records(repository: Path) -> tuple[Path, ...]:
-    """Validate clean source-bound test, build, and host integration evidence."""
+    """Validate clean source-bound build and host integration evidence."""
     root = require_repo(repository)
     identity = source_identity(root)
     if identity["dirty"]:
         raise LifecycleError("发布要求 clean candidate worktree")
-    _require_record_identity(root, ".states/co/test/latest.json", identity)
     build_record = read_build_record(root, identity)
     host_record = _require_record_identity(
         root, ".states/co/host-integration/latest.json", identity

@@ -191,7 +191,7 @@ def publish(repository: Path, *, dry_run: bool = False) -> str:
     """Atomically push one candidate/tag and publish verified GitHub assets.
 
     Args:
-        repository: Clean candidate checkout with exact verification records.
+        repository: Clean candidate checkout with matching build and host records.
         dry_run: Perform remote collision checks without creating local refs.
 
     Returns:
