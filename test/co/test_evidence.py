@@ -78,7 +78,9 @@ def _records(tmp_path: Path) -> tuple[Path, dict]:
 
 def test_native_records_publish_dry_run_without_mutations(tmp_path: Path) -> None:
     root, record = _records(tmp_path)
-    assert len(require_release_records(root)) == 3
+    source_rev, assets = require_release_records(root)
+    assert source_rev == record["sourceRev"]
+    assert len(assets) == 3
     with (
         patch("publication._require_origin"),
         patch("publication.ensure_release") as release,
@@ -143,17 +145,19 @@ def test_publication_still_requires_clean_source(tmp_path: Path) -> None:
         require_release_records(root)
 
 
-@pytest.mark.parametrize(
-    "field", ["sourceRev", "upstreamRev", "flakeLockSha256", "dirty"]
-)
-def test_release_rejects_stale_source_or_lock_identity(
-    tmp_path: Path, field: str
-) -> None:
+def test_publish_allows_stale_build_source(tmp_path: Path) -> None:
     root, record = _records(tmp_path)
-    record[field] = True if field == "dirty" else "0" * len(record[field])
-    write_json(root / ".states/co/build/latest.json", record)
-    with pytest.raises(LifecycleError, match=field):
-        require_release_records(root)
+    (root / "tracked").write_text("newer source\n")
+    _git(root, "commit", "-am", "newer source")
+
+    with (
+        patch("publication._require_origin"),
+        patch("publication.ensure_release") as release,
+    ):
+        tag = publish(root, dry_run=True)
+
+    assert tag.endswith(record["sourceRev"][:10])
+    assert release.call_args.args[1] == record["sourceRev"]
 
 
 def test_host_gate_validates_native_package_and_binds_manifest(tmp_path: Path) -> None:

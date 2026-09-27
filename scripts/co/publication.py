@@ -8,7 +8,6 @@ from typing import Any
 from common import (
     LifecycleError,
     git,
-    head,
     read_json,
     require_clean,
     require_repo,
@@ -191,7 +190,7 @@ def publish(repository: Path, *, dry_run: bool = False) -> str:
     """Atomically push one candidate/tag and publish verified GitHub assets.
 
     Args:
-        repository: Clean candidate checkout with matching build and host records.
+        repository: Clean candidate checkout with verified native build evidence.
         dry_run: Perform remote collision checks without creating local refs.
 
     Returns:
@@ -201,8 +200,9 @@ def publish(repository: Path, *, dry_run: bool = False) -> str:
     require_clean(root)
     source_branch = _source_branch(root)
     _require_origin(root)
-    source_rev = head(root)
-    assets = require_release_records(root)
+    source_rev, assets = require_release_records(root)
+    if not _succeeds(root, "merge-base", "--is-ancestor", source_rev, "HEAD"):
+        raise LifecycleError("build record sourceRev 不在当前 candidate 历史中")
     pending = _pending(root, source_rev, assets, archive_completed=not dry_run)
     tag = str(pending["tag"]) if pending else f"co-{timestamp()}-{source_rev[:10]}"
     if TAG_RE.fullmatch(tag) is None:

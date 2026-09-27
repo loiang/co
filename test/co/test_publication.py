@@ -54,7 +54,9 @@ def test_publish_failure_keeps_exact_refs_for_idempotent_retry(tmp_path: Path) -
     tag = f"co-20260912T140000Z-{source_rev[:10]}"
 
     with (
-        patch("publication.require_release_records", return_value=(asset,)),
+        patch(
+            "publication.require_release_records", return_value=(source_rev, (asset,))
+        ),
         patch("publication._require_origin"),
         patch("publication.timestamp", return_value="20260912T140000Z"),
         patch("publication.ensure_release", side_effect=RuntimeError("network")),
@@ -69,7 +71,9 @@ def test_publish_failure_keeps_exact_refs_for_idempotent_retry(tmp_path: Path) -
     assert _git(remote, "rev-parse", "refs/heads/main") == source_rev
 
     with (
-        patch("publication.require_release_records", return_value=(asset,)),
+        patch(
+            "publication.require_release_records", return_value=(source_rev, (asset,))
+        ),
         patch("publication._require_origin"),
         patch("publication.timestamp", return_value="20260912T140001Z"),
         patch("publication.ensure_release"),
@@ -91,7 +95,14 @@ def test_two_source_commits_publish_and_archive_completed_retry_record(
     with (
         patch(
             "publication.require_release_records",
-            side_effect=[(first_asset,), (root / ".states/co/build/second",)],
+            side_effect=lambda _: (
+                _git(root, "rev-parse", "HEAD"),
+                (
+                    (first_asset,)
+                    if _git(root, "rev-parse", "HEAD") == first_rev
+                    else (root / ".states/co/build/second",)
+                ),
+            ),
         ),
         patch("publication._require_origin"),
         patch("publication.timestamp", return_value="20260912T140010Z"),
@@ -113,6 +124,31 @@ def test_two_source_commits_publish_and_archive_completed_retry_record(
     assert _git(remote, "rev-parse", f"refs/tags/{second_tag}^{{}}") == second_rev
 
 
+def test_publish_stale_build_tags_its_recorded_source(tmp_path: Path) -> None:
+    root, remote, build_source_rev = _repository(tmp_path)
+    asset = root / ".states/co/build/asset"
+    asset.parent.mkdir(parents=True)
+    asset.write_text("asset", encoding="utf-8")
+    (root / "tracked").write_text("newer source\n", encoding="utf-8")
+    _git(root, "commit", "-am", "newer source")
+    current_rev = _git(root, "rev-parse", "HEAD")
+
+    with (
+        patch(
+            "publication.require_release_records",
+            return_value=(build_source_rev, (asset,)),
+        ),
+        patch("publication._require_origin"),
+        patch("publication.timestamp", return_value="20260912T140015Z"),
+        patch("publication.ensure_release"),
+    ):
+        tag = publish(root)
+
+    assert tag.endswith(build_source_rev[:10])
+    assert _git(remote, "rev-parse", "refs/heads/main") == current_rev
+    assert _git(remote, "rev-parse", f"refs/tags/{tag}^{{}}") == build_source_rev
+
+
 def test_unfinished_prior_source_record_blocks_new_publish(tmp_path: Path) -> None:
     root, _, first_rev = _repository(tmp_path)
     pending = root / ".states/co/publish/pending.json"
@@ -130,12 +166,16 @@ def test_unfinished_prior_source_record_blocks_new_publish(tmp_path: Path) -> No
     )
     (root / "tracked").write_text("second\n", encoding="utf-8")
     _git(root, "commit", "-am", "second")
+    second_rev = _git(root, "rev-parse", "HEAD")
     asset = root / ".states/co/build/second"
     asset.parent.mkdir(parents=True, exist_ok=True)
     asset.write_text("second", encoding="utf-8")
 
     with (
-        patch("publication.require_release_records", return_value=(asset,)),
+        patch(
+            "publication.require_release_records",
+            return_value=(second_rev, (asset,)),
+        ),
         patch("publication._require_origin"),
         pytest.raises(LifecycleError, match="其他 source commit"),
     ):
@@ -162,12 +202,16 @@ def test_dry_run_does_not_archive_completed_prior_source(tmp_path: Path) -> None
     )
     (root / "tracked").write_text("second\n", encoding="utf-8")
     _git(root, "commit", "-am", "second")
+    second_rev = _git(root, "rev-parse", "HEAD")
     asset = root / ".states/co/build/second"
     asset.parent.mkdir(parents=True, exist_ok=True)
     asset.write_text("second", encoding="utf-8")
 
     with (
-        patch("publication.require_release_records", return_value=(asset,)),
+        patch(
+            "publication.require_release_records",
+            return_value=(second_rev, (asset,)),
+        ),
         patch("publication._require_origin"),
         patch("publication.ensure_release"),
     ):
@@ -184,7 +228,9 @@ def test_released_same_source_retry_keeps_tag(tmp_path: Path) -> None:
     asset.write_text("asset", encoding="utf-8")
 
     with (
-        patch("publication.require_release_records", return_value=(asset,)),
+        patch(
+            "publication.require_release_records", return_value=(source_rev, (asset,))
+        ),
         patch("publication._require_origin"),
         patch("publication.timestamp", return_value="20260912T140030Z"),
         patch("publication.ensure_release"),
@@ -248,12 +294,14 @@ def test_atomic_push_rejects_concurrent_remote_main(tmp_path: Path) -> None:
 def test_retry_rejects_changed_local_asset_before_remote_mutation(
     tmp_path: Path,
 ) -> None:
-    root, _, _ = _repository(tmp_path)
+    root, _, source_rev = _repository(tmp_path)
     asset = root / ".states/co/build/asset"
     asset.parent.mkdir(parents=True)
     asset.write_text("first", encoding="utf-8")
     with (
-        patch("publication.require_release_records", return_value=(asset,)),
+        patch(
+            "publication.require_release_records", return_value=(source_rev, (asset,))
+        ),
         patch("publication._require_origin"),
         patch("publication.ensure_release", side_effect=RuntimeError("network")),
         pytest.raises(LifecycleError, match="可重试"),
@@ -261,7 +309,9 @@ def test_retry_rejects_changed_local_asset_before_remote_mutation(
         publish(root)
     asset.write_text("other", encoding="utf-8")
     with (
-        patch("publication.require_release_records", return_value=(asset,)),
+        patch(
+            "publication.require_release_records", return_value=(source_rev, (asset,))
+        ),
         patch("publication._require_origin"),
         patch("publication._push_refs") as push,
         patch("publication.ensure_release") as release,

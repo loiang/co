@@ -1,5 +1,6 @@
 """Validate source identity and provenance-bound release evidence."""
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,18 @@ def source_identity(root: Path) -> dict[str, Any]:
 
 def read_build_record(root: Path, identity: dict[str, Any]) -> dict[str, Any]:
     """Require a build record bound to the current source, lock, and dirtiness."""
-    record = _require_record_identity(root, ".states/co/build/latest.json", identity)
+    record = _read_build_record(root)
+    for field in ("sourceRev", "upstreamRev", "flakeLockSha256", "dirty"):
+        if record.get(field) != identity[field]:
+            raise LifecycleError(
+                f".states/co/build/latest.json 与当前源码不一致: {field}"
+            )
+    return record
+
+
+def _read_build_record(root: Path) -> dict[str, Any]:
+    """Read a native-package build record without requiring current-source freshness."""
+    record = read_json(root / ".states/co/build/latest.json")
     if record.get("schemaVersion") != 2:
         raise LifecycleError("build record 必须使用 native package schemaVersion=2")
     return record
@@ -124,13 +136,19 @@ def verify_build_record(root: Path, record: dict[str, Any]) -> Path:
     return directory
 
 
-def require_release_records(repository: Path) -> tuple[Path, ...]:
-    """Validate clean source-bound build evidence required for publication."""
+def require_release_records(repository: Path) -> tuple[str, tuple[Path, ...]]:
+    """Validate verified build evidence, allowing a clean checkout newer than the build."""
     root = require_repo(repository)
     identity = source_identity(root)
     if identity["dirty"]:
         raise LifecycleError("发布要求 clean candidate worktree")
-    build_record = read_build_record(root, identity)
+    build_record = _read_build_record(root)
+    source_rev = build_record.get("sourceRev")
+    if (
+        not isinstance(source_rev, str)
+        or re.fullmatch(r"[0-9a-f]{40,64}", source_rev) is None
+    ):
+        raise LifecycleError("build record sourceRev 无效")
     assets = _asset_paths(root, build_record)
     verify_build_record(root, build_record)
-    return assets
+    return source_rev, assets
