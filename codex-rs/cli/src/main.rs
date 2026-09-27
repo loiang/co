@@ -73,6 +73,7 @@ mod mcp_login;
 mod migrate_rollouts;
 mod plugin_cmd;
 mod queue_cmd;
+mod release_version;
 mod remote_control_cmd;
 #[cfg(target_os = "windows")]
 mod sandbox_setup;
@@ -120,7 +121,7 @@ use codex_terminal_detection::TerminalName;
 #[derive(Debug, Parser)]
 #[clap(
     author,
-    version,
+    version = release_version::CLI_VERSION,
     // If a sub‑command is given, ignore requirements of the default args.
     subcommand_negates_reqs = true,
     // The executable is sometimes invoked via a platform‑specific name like

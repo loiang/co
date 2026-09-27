@@ -30,6 +30,7 @@ def build_source_binaries(
     *,
     cargo: str,
     profile: str,
+    package_version: str,
     entrypoint_bin: Path | None,
     code_mode_host_bin: Path | None,
     bwrap_bin: Path | None,
@@ -65,17 +66,12 @@ def build_source_binaries(
         for binary in binaries:
             cmd.extend(["--bin", binary])
 
-        cargo_env = None
-        if (
-            entrypoint_bin is None
-            or code_mode_host_bin is None
-            or bwrap_bin is not None
-        ):
-            cargo_env = dict(os.environ)
-            if bwrap_bin is not None:
-                cargo_env["CODEX_BWRAP_SHA256"] = _sha256_file(bwrap_bin)
-            if entrypoint_bin is None or code_mode_host_bin is None:
-                cargo_env.update(resolve_codex_v8_cargo_env(spec))
+        cargo_env = dict(os.environ)
+        cargo_env["CODEX_CLI_VERSION"] = package_version
+        if bwrap_bin is not None:
+            cargo_env["CODEX_BWRAP_SHA256"] = _sha256_file(bwrap_bin)
+        if entrypoint_bin is None or code_mode_host_bin is None:
+            cargo_env.update(resolve_codex_v8_cargo_env(spec))
 
         print("+", " ".join(cmd))
         subprocess.run(

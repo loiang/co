@@ -108,6 +108,7 @@ class SourceBinariesForTargetTest(unittest.TestCase):
                     PACKAGE_VARIANTS["codex"],
                     cargo="cargo",
                     profile="release",
+                    package_version="0.157.1",
                     entrypoint_bin=None,
                     code_mode_host_bin=None,
                     bwrap_bin=None,
@@ -134,6 +135,9 @@ class SourceBinariesForTargetTest(unittest.TestCase):
                 ],
             )
             self.assertTrue(run.call_args.kwargs["check"])
+            self.assertEqual(
+                run.call_args.kwargs["env"]["CODEX_CLI_VERSION"], "0.157.1"
+            )
             self.assertEqual(outputs.entrypoint_bin, output / "codex")
             self.assertEqual(
                 outputs.code_mode_host_bin, output / "codex-code-mode-host"
@@ -153,6 +157,7 @@ class SourceBinariesForTargetTest(unittest.TestCase):
                 PACKAGE_VARIANTS["codex"],
                 cargo=str(root / "cargo-that-should-not-run"),
                 profile="release",
+                package_version="0.157.1",
                 entrypoint_bin=entrypoint,
                 code_mode_host_bin=code_mode_host,
                 bwrap_bin=None,
