@@ -264,7 +264,9 @@ class FetchCodexV8ArtifactsTest(unittest.TestCase):
             "x86_64-unknown-linux-gnu"
         )
         artifacts = self._run(spec, cache_dir=cache_dir)
-        manifest = cache_dir / next(name for name in payloads if name.endswith(".sha256"))
+        manifest = cache_dir / next(
+            name for name in payloads if name.endswith(".sha256")
+        )
         expected = manifest.read_bytes()
         for contents in (None, b"corrupt"):
             with self.subTest(contents=contents):
@@ -299,7 +301,9 @@ class FetchCodexV8ArtifactsTest(unittest.TestCase):
             "x86_64-unknown-linux-gnu"
         )
         artifacts = self._run(spec, cache_dir=cache_dir)
-        manifest = cache_dir / next(name for name in payloads if name.endswith(".sha256"))
+        manifest = cache_dir / next(
+            name for name in payloads if name.endswith(".sha256")
+        )
         old_manifest = manifest.read_bytes()
         pins = self.root / "third_party/v8/rusty_v8_150_4_0_release_manifests.sha256"
         pins.write_text(f"{'0' * 64}  {manifest.name}\n")
@@ -319,7 +323,9 @@ class FetchCodexV8ArtifactsTest(unittest.TestCase):
             "x86_64-unknown-linux-gnu"
         )
         artifacts = self._run(spec, cache_dir=cache_dir)
-        manifest = cache_dir / next(name for name in payloads if name.endswith(".sha256"))
+        manifest = cache_dir / next(
+            name for name in payloads if name.endswith(".sha256")
+        )
         expected = manifest.read_bytes()
         backing = manifest.with_suffix(".original")
         manifest.rename(backing)
@@ -328,7 +334,9 @@ class FetchCodexV8ArtifactsTest(unittest.TestCase):
         refreshed = self._run(spec, cache_dir=cache_dir)
         self.assertEqual(refreshed, artifacts)
         self.assertFalse(manifest.is_symlink())
-        self.assertEqual((manifest.read_bytes(), backing.read_bytes()), (expected, expected))
+        self.assertEqual(
+            (manifest.read_bytes(), backing.read_bytes()), (expected, expected)
+        )
         self.assertEqual(urlopen.call_count, 1)
 
     def test_interrupted_refresh_preserves_cache(self) -> None:
@@ -342,7 +350,9 @@ class FetchCodexV8ArtifactsTest(unittest.TestCase):
             "x86_64-unknown-linux-gnu"
         )
         artifacts = self._run(spec, cache_dir=cache_dir)
-        manifest = cache_dir / next(name for name in payloads if name.endswith(".sha256"))
+        manifest = cache_dir / next(
+            name for name in payloads if name.endswith(".sha256")
+        )
         manifest.write_bytes(b"stale manifest")
         with (
             patch.object(v8, "urlopen", return_value=InterruptedResponse(b"partial")),

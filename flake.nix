@@ -127,20 +127,28 @@
             pkgs.ruff;
           bazel = pkgs.writeShellApplication {
             name = "bazel";
-            runtimeInputs = [ pkgs.findutils ];
+            runtimeInputs = [
+              pkgs.coreutils
+              pkgs.proot
+            ];
             text =
               builtins.replaceStrings
                 [
+                  "@proot@"
                   "@bazelisk@"
-                  "@patchelf@"
                   "@loader@"
-                  "@rpath@"
+                  "@glibc_lib@"
+                  "@gcc_lib@"
+                  "@runtime_library_path@"
                 ]
                 [
+                  "${pkgs.proot}/bin/proot"
                   "${pkgs.bazelisk}/bin/bazelisk"
-                  "${pkgs.patchelf}/bin/patchelf"
                   "${pkgs.glibc}/lib/ld-linux-x86-64.so.2"
+                  "${pkgs.glibc}/lib"
+                  "${pkgs.stdenv.cc.cc.lib}/lib"
                   "${pkgs.lib.makeLibraryPath [
+                    pkgs.zlib
                     pkgs.glibc
                     pkgs.stdenv.cc.cc.lib
                   ]}"

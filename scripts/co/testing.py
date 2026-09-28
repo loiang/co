@@ -5,6 +5,7 @@ from pathlib import Path
 from common import git_flake, require_repo, run, timestamp, write_json
 from evidence import source_identity
 
+
 def run_tests(repository: Path) -> Path:
     """Run lifecycle regressions in the candidate shell.
 

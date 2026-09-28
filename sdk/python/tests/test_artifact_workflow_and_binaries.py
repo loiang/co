@@ -193,9 +193,7 @@ def test_root_format_driver_covers_all_formatter_groups(
         "--config",
         "imports_granularity=Item",
     )
-    assert formatters[0].commands == (
-        script.Command(rustfmt_args, tmp_path / "codex-rs"),
-    )
+    assert formatters[0].commands == (script.Command(rustfmt_args, tmp_path / "codex-rs"),)
     assert checks[0].commands == (
         script.Command(rustfmt_args + ("--check",), tmp_path / "codex-rs"),
     )

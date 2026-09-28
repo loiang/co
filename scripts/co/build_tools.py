@@ -152,6 +152,8 @@ def _is_gnu_make(path: Path, env: Mapping[str, str]) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     first_line = (result.stdout or "").splitlines()[:1]
-    return result.returncode == 0 and bool(first_line) and first_line[0].startswith(
-        "GNU Make "
+    return (
+        result.returncode == 0
+        and bool(first_line)
+        and first_line[0].startswith("GNU Make ")
     )
