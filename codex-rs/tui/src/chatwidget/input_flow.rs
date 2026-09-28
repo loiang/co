@@ -3,7 +3,8 @@
 //! The queue data itself lives in `input_queue`; this module owns the app-level
 //! effects around taking composer input, submitting user turns, draining queued
 //! follow-ups, and restoring draft state across interrupts or thread switches.
-//! Composer submissions resume transcript following before dispatch or startup queueing.
+//! Composer submissions resume transcript following before dispatch or startup queueing,
+//! except for reversible settings pickers that preserve the reading position.
 
 use super::*;
 use crate::bottom_pane::prompt_args::parse_slash_name;
@@ -22,12 +23,8 @@ impl ChatWidget {
         input_result: InputResult,
         had_modal_or_popup: bool,
     ) {
-        if matches!(
-            &input_result,
-            InputResult::Command(_)
-                | InputResult::ServiceTierCommand(_)
-                | InputResult::CommandWithArgs(..)
-        ) {
+        let follow_transcript = input_follow_policy::should_follow_transcript(&input_result);
+        if follow_transcript {
             self.app_event_tx.send(AppEvent::FollowTranscript);
         }
         match input_result {
@@ -80,6 +77,10 @@ impl ChatWidget {
             }
             InputResult::Command(cmd) => {
                 self.handle_slash_command_dispatch(cmd);
+                // A settings command can instead report why it is unavailable.
+                if !follow_transcript && self.bottom_pane.no_modal_or_popup_active() {
+                    self.app_event_tx.send(AppEvent::FollowTranscript);
+                }
             }
             InputResult::ServiceTierCommand(command) => {
                 self.handle_service_tier_command_dispatch(command);

@@ -111,6 +111,8 @@ impl TranscriptView {
         }
         self.search.editor.set_keymap_bindings(keymap);
         self.disclosure.keymap = keymap.clone();
+        self.cache.clear();
+        self.live_key = None;
     }
 
     pub(crate) fn is_search_active(&self) -> bool {
@@ -215,7 +217,7 @@ impl TranscriptView {
     }
 
     /// Restore the pre-search presentation before an explicit return or cancellation.
-    pub(super) fn cancel_search(&mut self) {
+    pub(crate) fn cancel_search(&mut self) {
         if !self.search.active {
             return;
         }

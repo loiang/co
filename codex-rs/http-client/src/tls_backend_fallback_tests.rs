@@ -19,6 +19,8 @@ fn recognizes_platform_specific_tls_protocol_negotiation_failures() {
             true,
         ),
         ("TLSV1 ALERT PROTOCOL VERSION", true),
+        ("received fatal alert: ProtocolVersion", true),
+        ("AlertReceived(ProtocolVersion)", true),
         (
             "The function requested is not supported. (os error -2146893054)",
             true,
@@ -41,6 +43,7 @@ fn recognizes_platform_specific_tls_protocol_negotiation_failures() {
         ),
         ("certificate validation failed: 0x80090302", false),
         ("unknown issuer", false),
+        ("InvalidCertificate(UnknownIssuer)", false),
         ("self-signed certificate", false),
         ("hostname mismatch", false),
         ("connection refused", false),
@@ -107,10 +110,7 @@ fn rustls_fallback_decisions_are_scoped_to_origin_and_outbound_route() {
         no_proxy: None,
     };
 
-    let client = HttpClientBuilder::new()
-        .with_rustls_tls()
-        .build_direct()
-        .expect("rustls client should build without proxy autodiscovery");
+    let client = direct_rustls_client();
     cache.remember(&destination, &direct, client);
 
     assert_eq!(
@@ -134,10 +134,7 @@ fn cached_rustls_clients_are_reused_for_the_same_outbound_route() {
     let second_destination =
         reqwest::Url::parse("https://second.example.com").expect("valid second URL");
     let direct = OutboundProxyRoute::Direct;
-    let client = HttpClientBuilder::new()
-        .with_rustls_tls()
-        .build_direct()
-        .expect("rustls client should build without proxy autodiscovery");
+    let client = direct_rustls_client();
 
     cache.remember(&first_destination, &direct, client.clone());
     cache.remember(&second_destination, &direct, client);
@@ -161,10 +158,7 @@ fn cached_rustls_clients_are_reused_for_the_same_outbound_route() {
 #[test]
 fn cached_rustls_destinations_remain_bounded_while_sharing_a_route_client() {
     let cache = RustlsClientCache::default();
-    let client = HttpClientBuilder::new()
-        .with_rustls_tls()
-        .build_direct()
-        .expect("rustls client should build without proxy autodiscovery");
+    let client = direct_rustls_client();
 
     for index in 0..=MAX_CACHED_RUSTLS_DESTINATIONS {
         let destination =
@@ -182,10 +176,7 @@ fn cached_rustls_destinations_remain_bounded_while_sharing_a_route_client() {
 #[test]
 fn evicting_a_destination_removes_its_unshared_route_client() {
     let cache = RustlsClientCache::default();
-    let client = HttpClientBuilder::new()
-        .with_rustls_tls()
-        .build_direct()
-        .expect("rustls client should build without proxy autodiscovery");
+    let client = direct_rustls_client();
 
     for index in 0..=MAX_CACHED_RUSTLS_DESTINATIONS {
         let destination =
@@ -213,4 +204,15 @@ fn evicting_a_destination_removes_its_unshared_route_client() {
             true,
         )
     );
+}
+
+fn direct_rustls_client() -> crate::client::TransportClient {
+    HttpClientBuilder::new()
+        .with_rustls_tls()
+        .build_for_resolved_route(
+            &crate::HttpClientFactory::new(crate::OutboundProxyPolicy::ReqwestDefault),
+            crate::ClientRouteClass::Api,
+            &OutboundProxyRoute::Direct,
+        )
+        .expect("rustls client should build without proxy autodiscovery")
 }

@@ -94,9 +94,11 @@ def fetch_codex_v8_artifacts(
     checksums = cache_dir / checksums_name
 
     trusted_manifest_checksum(checksums.name, version=version)
-    expected_checksums = _cached_checksums(
-        checksums, version=version, artifact_names={archive.name, binding.name}
-    )
+    expected_checksums = None
+    if not checksums.is_symlink():
+        expected_checksums = _cached_checksums(
+            checksums, version=version, artifact_names={archive.name, binding.name}
+        )
     if expected_checksums is None:
         _download_verified(
             f"{release_url}/{checksums.name}",

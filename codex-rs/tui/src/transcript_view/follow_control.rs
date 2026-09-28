@@ -1,4 +1,5 @@
 //! Return-to-latest affordance in the owned transcript's existing composer gap.
+//! The control is hidden whenever the current final transcript row is visible.
 //! Rendering owns the hit rectangle; hidden controls never intercept pointer input.
 
 use super::*;
@@ -18,38 +19,11 @@ pub(super) struct FollowControl {
 
 impl TranscriptView {
     pub(crate) fn render_follow_control(&mut self, area: Option<Rect>, buf: &mut Buffer) {
-        let area = area.filter(|area| {
-            !area.is_empty()
-                && self.can_return_to_latest()
-                && self.highlight.is_none()
-                && self.selection.is_none()
-                && !self.is_search_active()
-        });
-        let Some(area) = area else {
+        let Some(area) = area.filter(|area| !area.is_empty()) else {
             self.follow_control = FollowControl::default();
             return;
         };
-        let labels = if self.unseen_activity {
-            [
-                " New activity · ↓ Back to bottom · esc ",
-                " New activity · ↓ Bottom ",
-                " New · ↓ Bottom ",
-                " ↓ Bottom ",
-                " ↓ ",
-            ]
-        } else {
-            [
-                " ↓ Back to bottom · esc ",
-                " ↓ Back to bottom ",
-                " ↓ Bottom · esc ",
-                " ↓ Bottom ",
-                " ↓ ",
-            ]
-        };
-        let Some(label) = labels
-            .into_iter()
-            .find(|label| label.width() <= usize::from(area.width))
-        else {
+        let Some(label) = self.follow_control_label(area.width) else {
             self.follow_control = FollowControl::default();
             return;
         };
@@ -73,6 +47,37 @@ impl TranscriptView {
             style
         };
         Paragraph::new(label).style(style).render(target, buf);
+    }
+
+    pub(super) fn follow_control_label(&self, width: u16) -> Option<&'static str> {
+        if self.area.is_empty()
+            || self.tail_visible
+            || self.highlight.is_some()
+            || self.selection.is_some()
+            || self.is_search_active()
+        {
+            return None;
+        }
+        let labels = if self.unseen_activity {
+            [
+                " New activity · ↓ Back to bottom · esc ",
+                " New activity · ↓ Bottom ",
+                " New · ↓ Bottom ",
+                " ↓ Bottom ",
+                " ↓ ",
+            ]
+        } else {
+            [
+                " ↓ Back to bottom · esc ",
+                " ↓ Back to bottom ",
+                " ↓ Bottom · esc ",
+                " ↓ Bottom ",
+                " ↓ ",
+            ]
+        };
+        labels
+            .into_iter()
+            .find(|label| label.width() <= usize::from(width))
     }
 
     pub(super) fn handle_follow_control_mouse(&mut self, event: MouseEvent) -> Option<ViewAction> {

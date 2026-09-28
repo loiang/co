@@ -1,6 +1,12 @@
 # `co` custom patch ledger
 
-本页只记录相对 `upstream/main` 的本地自定义功能。每项同时给出 commit、用户可见行为，以及当前源码中的保护和测试路径。比较基线为 `upstream/main` 的 `78245b47af2a7aafcabe025828ceecca69db4df1`；该基线本身不属于本地 patch。
+本页只记录相对 `upstream/main` 的本地自定义功能。每项同时给出 commit、用户可见行为，以及当前源码中的保护和测试路径。比较基线为 `upstream/main` 的 `44fe510ce3ee61c8ef623adcbf89b901c73ddd61`；该基线本身不属于本地 patch。
+
+## 2026-09-28 — upstream `44fe510ce3ee61c8ef623adcbf89b901c73ddd61` 合并保留记录
+
+- **基线推进**：从共同祖先 `5c5308fc9a9ee789049d646ef11e5400384b9c6f` 合并官方 `upstream/main`；本节只记录已在该次集成中回读的真实 upstream OID，不把集成结果伪记为历史自定义 commit。
+- **冲突保留**：`codex-rs/http-client/Cargo.toml` 吸收上游 `http-body`、`httpdate`、`serde_urlencoded`、`reqwest` TLS 与 Tokio 测试依赖，同时继续启用 `native-tls` 的 `vendored` feature，保持 Linux GNU native package 不依赖宿主 OpenSSL。`justfile` 继续删除，避免恢复已由 native `co` lifecycle 取代的 Just 入口。`scripts/check-module-bazel-lock.sh` 保留上游“verification failed”诊断，并将修复命令维持为直接的 `bazel mod deps --lockfile_mode=update`。`scripts/codex_package/v8.py` 保留 trusted pin 预检、离线完整缓存、临时文件原子替换和有界重试；同时吸收上游对 manifest symlink cache entry 的拒绝与安全替换。
+- **回读保护点**：native package、bwrap、GNU Make、package verification、grouped Cargo `--locked`、`co sync`/installed backend、archive-except 与 bundled-skill cleanup 的源码路径均在合并树中存在；验证以 `scripts/codex_package/test_v8.py`、`test/co/` native lifecycle tests，以及受影响 Rust crate 的 nextest 为准。
 
 ## 001e804c0b — source-built customized CLI lifecycle
 

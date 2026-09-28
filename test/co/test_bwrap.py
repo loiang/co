@@ -249,6 +249,7 @@ def test_cargo_receives_bwrap_digest_pin_for_prebuilt_binary(tmp_path: Path) -> 
             PACKAGE_VARIANTS["codex"],
             cargo="cargo",
             profile="release",
+            package_version="0.157.1",
             entrypoint_bin=None,
             code_mode_host_bin=None,
             bwrap_bin=bwrap,

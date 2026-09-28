@@ -197,6 +197,7 @@ fn startup_bottom_pane() -> (BottomPane, UnboundedReceiver<AppEvent>) {
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: true,
             animations_enabled: true,
+            effects: Default::default(),
             skills: None,
         }),
         app_event_rx,
@@ -1218,8 +1219,7 @@ async fn remote_overview_startup_hides_disabled_older_server_notice() -> Result<
     let view = app.agents_overview_view(Vec::new(), /*selected_thread_id*/ None);
     app.chat_widget.show_bottom_pane_view(Box::new(view));
     let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80);
-    insta::assert_snapshot!(rendered.lines().take(/*n*/ 2).collect::<Vec<_>>().join("\n"), @"  Agent command center
-  0 need input   0 working   0 ready");
+    assert!(!rendered.contains("Service v"));
     app.chat_widget.remote_connection =
         crate::status::remote_connection::remote_connection_status_value(
             &app.app_server_target,
@@ -1236,8 +1236,7 @@ async fn remote_overview_startup_hides_disabled_older_server_notice() -> Result<
     app.local_settings.tui.show_server_version_notice = true;
     app.refresh_server_version_overview_notice("2.1.0");
     let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80);
-    insta::assert_snapshot!(rendered.lines().take(/*n*/ 2).collect::<Vec<_>>().join("\n"), @"  Service v2.0.0 < Codex CLI v2.1.0
-  0 need input   0 working   0 ready");
+    assert!(rendered.contains("Service v2.0.0 < Codex CLI v2.1.0"));
     app.pending_server_version_notice =
         Some(crate::status::remote_connection::ServerVersionNotice {
             message: "Older service".to_string(),

@@ -1,20 +1,11 @@
-//! Stable, contextual discovery in unused composer-gap space.
-//! Hints change with conversation state, never on a timer, and honor show_tooltips.
+//! Usage warnings appear above the fullscreen composer when no interaction takes priority.
 
 use super::*;
-use crate::history_cell::SessionInfoCell;
-use crate::history_cell::UserHistoryCell;
-use crate::keymap::KeymapContext;
-use crate::style::secondary_text_style;
-use ratatui::style::Styled;
-use ratatui::text::Line;
+use crate::terminal_hyperlinks::HyperlinkLine;
 
 impl App {
-    pub(super) fn composer_tip(&self) -> Option<Line<'static>> {
-        if !self.local_settings.tui.show_tooltips
-            || !self.chat_widget.composer_is_empty()
-            || self.chat_widget.is_user_turn_pending_or_running()
-            || !self.chat_widget.no_modal_or_popup_active()
+    pub(super) fn composer_hint(&self, width: u16) -> Option<HyperlinkLine> {
+        if !self.chat_widget.no_modal_or_popup_active()
             || !self.transcript_view.is_following()
             || self.transcript_view.has_active_interaction()
             || self.backtrack.primed
@@ -22,44 +13,11 @@ impl App {
         {
             return None;
         }
-        // Cosmetic tip rotation needs cell types, not a scan of every prompt's text.
-        let count = self
-            .transcript_cells
-            .iter()
-            .rev()
-            .take_while(|cell| !cell.as_any().is::<SessionInfoCell>())
-            .filter(|cell| cell.as_any().is::<UserHistoryCell>())
-            .count();
-        let (prefix, keys, label) = if count == 0 {
-            (
-                "Tip: ",
-                crate::key_hint::key_label_spans("@"),
-                " mentions files, skills, and plugins",
-            )
-        } else {
-            match count % 3 {
-                0 => (
-                    "Tip: drag to select text · ",
-                    crate::key_hint::key_label_spans("ctrl+c"),
-                    " copies",
-                ),
-                1 => {
-                    let key = self
-                        .keymap
-                        .primary_hint(KeymapContext::Global, "find_transcript")?;
-                    ("Tip: ", key.spans(), " searches this conversation")
-                }
-                _ => {
-                    return Some(Line::from(
-                        "Tip: /copy copies the last response".set_style(secondary_text_style()),
-                    ));
-                }
-            }
-        };
-        let mut tip = Line::from(prefix.set_style(secondary_text_style()));
-        tip.spans.extend(keys);
-        tip.spans.push(label.set_style(secondary_text_style()));
-        Some(tip)
+        let width = width.checked_sub(/*rhs*/ 2)?;
+        if width == 0 {
+            return None;
+        }
+        self.chat_widget.usage_notice(width).map(HyperlinkLine::new)
     }
 }
 

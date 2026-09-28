@@ -3,6 +3,7 @@
 use super::*;
 use crate::app::tests::make_test_app_with_channels;
 use crate::app_command::AppCommand;
+use crate::app_event::ConsolidationScrollbackReflow;
 use crate::chatwidget::tests::helpers::normalize_snapshot_paths;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::UserHistoryCell;
@@ -10,11 +11,19 @@ use crate::session_state::ThreadSessionState;
 use crate::test_support::test_path_buf;
 use codex_app_server_protocol::AskForApproval;
 use codex_config::types::ApprovalsReviewer;
+use codex_config::types::CopyOnSelect;
 use codex_protocol::models::PermissionProfile;
+use crossterm::event::MouseButton::Left;
+use crossterm::event::MouseButton::Right;
+use crossterm::event::MouseEvent;
+use crossterm::event::MouseEventKind;
+use crossterm::event::MouseEventKind::Down;
+use crossterm::event::MouseEventKind::Drag;
+use crossterm::event::MouseEventKind::Up;
 use pretty_assertions::assert_eq;
 use ratatui::buffer::Buffer;
 
-fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
+pub(in crate::app) fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
     Arc::new(UserHistoryCell {
         spoken: false,
         message: message.to_string(),
@@ -24,7 +33,7 @@ fn user_cell(message: &str) -> Arc<dyn HistoryCell> {
     })
 }
 
-fn attach_thread(app: &mut App, thread_id: ThreadId) {
+pub(in crate::app) fn attach_thread(app: &mut App, thread_id: ThreadId) {
     app.chat_widget.handle_thread_session(ThreadSessionState {
         windows_sandbox_host: crate::app::WindowsSandboxHost::Local,
         thread_id,
@@ -50,7 +59,7 @@ fn attach_thread(app: &mut App, thread_id: ThreadId) {
     });
 }
 
-fn buffer_text(buffer: &Buffer) -> String {
+pub(in crate::app) fn buffer_text(buffer: &Buffer) -> String {
     buffer
         .content()
         .chunks(usize::from(buffer.area.width))
@@ -63,6 +72,127 @@ fn buffer_text(buffer: &Buffer) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[tokio::test]
+async fn external_writer_escape_returns_to_command_center_without_editing() -> Result<()> {
+    for (detailed, scrolled, offline) in [
+        (false, false, false),
+        (false, true, false),
+        (true, false, false),
+        (false, false, true),
+    ] {
+        let mut app = crate::app::test_support::make_test_app().await;
+        attach_thread(&mut app, ThreadId::new());
+        app.transcript_cells = vec![user_cell("First prompt"), user_cell("Second prompt")];
+        app.app_server_target = AppServerTarget::Remote {
+            endpoint: crate::resolve_remote_addr("ws://127.0.0.1:4500")?,
+        };
+        app.chat_widget.show_external_writer_thread();
+        if offline {
+            assert!(app.begin_reconnect());
+        }
+        let mut app_server =
+            Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        tui.set_owned_screen(/*owned*/ true)?;
+        if detailed {
+            app.open_transcript_overlay(&mut tui);
+        }
+        if scrolled {
+            app.transcript_view
+                .jump_to_entry(&app.transcript_cells, /*index*/ 0);
+        }
+
+        app.handle_tui_event(
+            &mut tui,
+            &mut app_server,
+            TuiEvent::Key(KeyCode::Esc.into()),
+        )
+        .await?;
+
+        assert!(app.chat_widget.has_active_view());
+        assert_eq!(
+            (
+                app.backtrack.primed,
+                app.backtrack.overlay_preview_active,
+                app.chat_widget.composer_text_with_pending(),
+            ),
+            (false, false, String::new()),
+        );
+        if offline {
+            assert!(app.agents_overview.request_id.is_none());
+            assert!(app.reconnect.presentation == reconnect::ReconnectPresentation::Overview);
+            insta::assert_snapshot!(
+                "external_writer_escape_offline_command_center",
+                crate::chatwidget::tests::helpers::normalize_agent_center_snapshot(
+                    crate::chatwidget::tests::helpers::render_bottom_popup(
+                        &app.chat_widget,
+                        /*width*/ 96,
+                    )
+                )
+            );
+        } else if !detailed && !scrolled {
+            insta::assert_snapshot!(
+                "external_writer_escape_command_center",
+                crate::chatwidget::tests::helpers::normalize_agent_center_snapshot(
+                    crate::chatwidget::tests::helpers::render_bottom_popup(
+                        &app.chat_widget,
+                        /*width*/ 96,
+                    )
+                )
+            );
+        }
+        tui.set_owned_screen(/*owned*/ false)?;
+        app_server.shutdown().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_spacing_completion_preserves_the_scrolled_reader() -> Result<()> {
+    let mut app = crate::app::test_support::make_test_app().await;
+    app.transcript_cells = vec![Arc::new(history_cell::AgentMessageCell::new(
+        vec![
+            "• First item wraps onto".into(),
+            "  a second row".into(),
+            "• b".into(),
+            "• c".into(),
+        ],
+        /*is_first_line*/ true,
+    ))];
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    tui.set_owned_screen(/*owned*/ true)?;
+    let area = Rect::new(
+        /*x*/ 0, /*y*/ 0, /*width*/ 26, /*height*/ 1,
+    );
+    let mut before = Buffer::empty(area);
+    app.transcript_view
+        .jump_to_entry(&app.transcript_cells, /*index*/ 0);
+    app.transcript_view
+        .render(area, &mut before, &app.transcript_cells);
+    app.transcript_view
+        .scroll(&app.transcript_cells, /*rows*/ 3);
+    app.transcript_view
+        .render(area, &mut before, &app.transcript_cells);
+    assert!(buffer_text(&before).contains("• c"));
+    app.handle_consolidate_agent_message(
+        &mut tui,
+        "- First item wraps onto a second row\n- b\n- c".into(),
+        app.config.cwd.to_path_buf(),
+        /*inline_visualization_context*/ None,
+        ConsolidationScrollbackReflow::Required,
+        /*deferred_history_cell*/ None,
+    )?;
+    let mut after = Buffer::empty(area);
+    app.transcript_view
+        .render(area, &mut after, &app.transcript_cells);
+    assert_eq!(after, before);
+    app.transcript_view.jump_to_latest();
+    app.transcript_view
+        .render(area, &mut after, &app.transcript_cells);
+    assert_eq!(after, before);
+    Ok(())
 }
 
 #[tokio::test]
@@ -131,6 +261,69 @@ async fn older_page_loading_uses_the_status_row_without_moving_content_or_cursor
 }
 
 #[tokio::test]
+async fn recap_spacing_belongs_to_the_transcript_tail() -> Result<()> {
+    let mut snapshots = Vec::new();
+    for (width, height, next_action) in [
+        (80, 10, None),
+        (80, 12, Some("Review the changes.")),
+        (32, 12, Some("Review the changes.")),
+        (80, 7, Some("Review the changes.")),
+        (32, 6, Some("Review the changes.")),
+    ] {
+        let mut app = crate::app::test_support::make_test_app().await;
+        attach_thread(&mut app, ThreadId::new());
+        app.local_settings.tui.show_tooltips = true;
+        app.local_settings.tui.animations = false;
+        app.transcript_cells = vec![
+            Arc::new(crate::history_cell::PlainHistoryCell::new(
+                (1..=20)
+                    .map(|row| format!("History {row}").into())
+                    .collect(),
+            )),
+            Arc::new(
+                crate::history_cell::ThreadRecapHistoryCell::new("The draft is ready.".into())
+                    .with_next_action(next_action.map(str::to_owned)),
+            ),
+        ];
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        tui.set_owned_screen(/*owned*/ true)?;
+        let size = Size::new(width, height);
+        tui.terminal.resize(size)?;
+        let mut snapshot = |app: &mut App, label: &str| -> Result<()> {
+            app.render_owned_transcript(&mut tui, size)?;
+            let buffer = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
+            snapshots.push(format!(
+                "{width}x{height}, {label}\n{}",
+                buffer_text(buffer)
+            ));
+            Ok(())
+        };
+        snapshot(&mut app, "Recap at tail")?;
+        app.transcript_cells
+            .push(Arc::new(crate::history_cell::AgentMessageCell::new(
+                vec!["Follow-up response.".into()],
+                /*is_first_line*/ true,
+            )));
+        snapshot(&mut app, "Message after recap")?;
+        app.transcript_cells.pop();
+        crate::chatwidget::tests::helpers::set_active_cell(
+            &mut app.chat_widget,
+            Box::new(crate::history_cell::AgentMessageCell::new(
+                vec!["Streaming response.".into()],
+                /*is_first_line*/ true,
+            )),
+        );
+        snapshot(&mut app, "Live message after recap")?;
+        tui.set_owned_screen(/*owned*/ false)?;
+    }
+    insta::assert_snapshot!(
+        "recap_tail_spacing",
+        normalize_snapshot_paths(snapshots.join("\n\n"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
     let mut app = crate::app::test_support::make_test_app().await;
     attach_thread(&mut app, ThreadId::new());
@@ -181,10 +374,11 @@ async fn owned_transcript_reserves_a_row_above_the_composer() -> Result<()> {
             ));
             continue;
         }
-        let gap = Rect::new(/*x*/ 0, bottom.y - 1, width, /*height*/ 1);
+        let gap = Rect::new(/*x*/ 0, bottom.y, width, /*height*/ 1);
         let buffer = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
         let start = buffer.index_of(gap.x, gap.y);
-        if app.transcript_view.is_following() {
+        // Both scenarios show the current tail, including the paused detailed view.
+        if matches!(label, "Latest" | "Detailed") {
             assert_eq!(
                 &buffer.content()[start..start + usize::from(width)],
                 Buffer::empty(gap).content(),
@@ -320,6 +514,8 @@ async fn owned_details_keep_the_composer_cursor_and_screen() -> Result<()> {
         .bottom_pane_renderable(
             /*footer*/ None,
             crate::bottom_pane::CommandPopupPlacement::Overlay,
+            Some(&crate::bottom_pane::ComposerGap::default()),
+            /*working_tip*/ None,
         )
         .cursor_pos(bottom_area)
         .expect("composer cursor");
@@ -954,6 +1150,8 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
         let before =
             crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal).clone();
 
+        // Suggestions may cover the gap, but not the single-line composer's top padding.
+        let composer_y = cursor.y.saturating_sub(/*rhs*/ 1);
         // Changing the token reopens the menu dismissed above.
         app.chat_widget.apply_external_edit("/mo".to_string());
         app.chat_widget.apply_external_edit("/m".to_string());
@@ -962,7 +1160,7 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
         let open =
             crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal).clone();
         let open_text = buffer_text(&open);
-        if bottom.y > 0 {
+        if composer_y > 0 {
             let menu_y = open_text
                 .lines()
                 .position(|line| line.contains("› /model"))
@@ -974,7 +1172,7 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
             );
             assert_ne!(open, before);
         }
-        let composer_start = open.index_of(bottom.x, bottom.y);
+        let composer_start = open.index_of(bottom.x, composer_y);
         assert_eq!(
             &open.content()[composer_start..],
             &before.content()[composer_start..]
@@ -991,9 +1189,9 @@ async fn slash_picker_overlays_history_without_moving_the_transcript_or_composer
         assert_eq!(
             filtered
                 .lines()
-                .take(usize::from(bottom.y))
+                .take(usize::from(composer_y))
                 .any(|line| line.contains("› /model")),
-            bottom.y > 0,
+            composer_y > 0,
             "a single command remains visible when the menu has room",
         );
         app.chat_widget.apply_external_edit("/m".to_string());
@@ -1125,5 +1323,192 @@ async fn find_refreshes_live_details_before_searching_the_first_query() -> Resul
     assert!(rendered.contains("enter next"), "{rendered}");
     tui.set_owned_screen(/*owned*/ false)?;
     app_server.shutdown().await?;
+    Ok(())
+}
+
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> TuiEvent {
+    TuiEvent::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
+}
+
+fn row_containing(tui: &tui::Tui, text: &str) -> u16 {
+    let buffer = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
+    buffer_text(buffer)
+        .lines()
+        .position(|row| row.contains(text))
+        .unwrap() as u16
+}
+
+#[tokio::test]
+async fn fullscreen_composer_mouse_copy_and_input_ownership() -> Result<()> {
+    let mut app = crate::app::test_support::make_test_app().await;
+    app.local_settings.tui.copy_on_select = CopyOnSelect::Never;
+    let mut server = Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    tui.set_owned_screen(/*owned*/ true)?;
+    let size = tui.terminal.size()?;
+    app.transcript_cells = vec![user_cell("transcript text")];
+    app.chat_widget.apply_external_edit("hello world".into());
+    app.render_owned_transcript(&mut tui, size)?;
+    let end = tui.terminal.last_known_cursor_pos;
+    let x = end.x - 11;
+    let y = end.y;
+    for event in [
+        mouse(Down(Left), x, y),
+        mouse(Drag(Left), x + 5, y),
+        mouse(Up(Left), x + 5, y),
+    ] {
+        assert!(app.handle_owned_transcript_event(&mut tui, &mut server, &event)?);
+    }
+    assert!(!app.transcript_view.has_active_interaction());
+    app.start_right_click_paste(
+        &mut tui,
+        crossterm::event::MouseEvent {
+            kind: Down(Right),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert!(!tui.clipboard.is_busy());
+    app.render_owned_transcript(&mut tui, size)?;
+    let cursor = tui.terminal.last_known_cursor_pos;
+    let draft = app.chat_widget.capture_thread_input_state();
+    for event in [
+        mouse(Up(Right), x + 2, y),
+        mouse(Down(Right), /*column*/ 0, y),
+        mouse(Down(Right), size.width, y),
+        mouse(Down(Right), x, y - 1),
+        mouse(Down(Right), x, y + 1),
+    ] {
+        assert!(!app.handle_composer_copy_event(&mut tui, &event, |_, _| unreachable!()));
+    }
+    let copy_events = [
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::SUPER)),
+        TuiEvent::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        mouse(Down(Right), x + 2, y),
+    ];
+    let mut selection_frames = Vec::new();
+    for (index, event) in copy_events.iter().enumerate() {
+        // Each confirmed copy clears the selection, so select again for the next gesture.
+        if index > 0 {
+            for event in [
+                mouse(Down(Left), x, y),
+                mouse(Drag(Left), x + 5, y),
+                mouse(Up(Left), x + 5, y),
+            ] {
+                assert!(app.handle_owned_transcript_event(&mut tui, &mut server, &event)?);
+            }
+        }
+        for result in [
+            Err("clipboard unavailable".to_string()),
+            Ok(crate::clipboard_copy::CopyStatus::Unconfirmed),
+            Ok(crate::clipboard_copy::CopyStatus::Confirmed),
+        ] {
+            assert!(app.handle_composer_copy_event(&mut tui, event, |_, text| {
+                assert_eq!(text, "hello");
+                result.clone()
+            }));
+            app.render_owned_transcript(&mut tui, size)?;
+            let buffer = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
+            let rendered_draft = (x..x + 11)
+                .map(|column| buffer[(column, y)].symbol())
+                .collect::<String>();
+            let selection = (x..x + 11)
+                .map(|column| {
+                    if buffer[(column, y)]
+                        .modifier
+                        .contains(ratatui::style::Modifier::REVERSED)
+                    {
+                        '^'
+                    } else {
+                        '·'
+                    }
+                })
+                .collect::<String>();
+            let cleared = result == Ok(crate::clipboard_copy::CopyStatus::Confirmed);
+            assert_eq!(
+                (
+                    app.chat_widget.capture_thread_input_state(),
+                    tui.terminal.last_known_cursor_pos,
+                    selection.as_str(),
+                ),
+                (
+                    draft.clone(),
+                    cursor,
+                    if cleared {
+                        "···········"
+                    } else {
+                        "^^^^^······"
+                    },
+                )
+            );
+            let gesture = match event {
+                TuiEvent::Mouse(_) => "right-click",
+                TuiEvent::Key(key) if key.modifiers == KeyModifiers::SUPER => "cmd-c",
+                _ => "ctrl-c",
+            };
+            selection_frames.push(format!(
+                "{gesture} {result:?}\n{rendered_draft}\n{selection}"
+            ));
+        }
+    }
+    assert_eq!(app.chat_widget.capture_thread_input_state(), draft);
+    app.render_owned_transcript(&mut tui, size)?;
+    assert!(row_containing(&tui, "Copied 5 chars to host clipboard") < y);
+    insta::assert_snapshot!(
+        "fullscreen_composer_right_click_copy",
+        format!(
+            "{}\n\n{}",
+            selection_frames.join("\n\n"),
+            normalize_snapshot_paths(buffer_text(
+                crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
+            ))
+        )
+    );
+
+    app.chat_widget.handle_key_event(KeyCode::Char('x').into());
+    for event in &copy_events {
+        assert!(!app.handle_composer_copy_event(&mut tui, event, |_, _| unreachable!()));
+    }
+    assert_eq!(app.chat_widget.composer_text_with_pending(), "hellox world");
+
+    // A transcript drag that crosses into the composer remains a transcript selection.
+    let transcript_y = row_containing(&tui, "transcript text");
+    for event in [
+        mouse(Down(Left), /*column*/ 1, transcript_y),
+        mouse(Drag(Left), x + 3, y),
+        mouse(Up(Left), x + 3, y),
+    ] {
+        app.handle_owned_transcript_event(&mut tui, &mut server, &event)?;
+    }
+    assert!(app.transcript_view.has_active_interaction());
+    for event in &copy_events {
+        assert!(!app.handle_composer_copy_event(&mut tui, event, |_, _| unreachable!()));
+    }
+
+    // A fresh composer click takes ownership away from the transcript selection.
+    app.handle_owned_transcript_event(&mut tui, &mut server, &mouse(Down(Left), x, y))?;
+    assert!(!app.transcript_view.has_active_interaction());
+    app.chat_widget.apply_external_edit("/".into());
+    assert!(!app.chat_widget.no_modal_or_popup_active());
+    assert!(app.handle_owned_transcript_event(&mut tui, &mut server, &mouse(Down(Left), x, y))?);
+    app.handle_owned_transcript_event(&mut tui, &mut server, &mouse(Drag(Left), x + 1, y))?;
+    assert!(app.chat_widget.no_modal_or_popup_active());
+    app.chat_widget.open_feature_enable_prompt(Feature::Collab);
+    for event in &copy_events {
+        assert!(
+            !app.handle_composer_copy_event(&mut tui, event, |_, _| panic!(
+                "modals own copy input"
+            ))
+        );
+    }
+    assert!(!app.handle_owned_transcript_event(&mut tui, &mut server, &mouse(Down(Left), x, y))?);
+    server.shutdown().await?;
+    tui.set_owned_screen(/*owned*/ false)?;
     Ok(())
 }

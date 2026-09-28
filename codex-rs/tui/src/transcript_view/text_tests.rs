@@ -4,6 +4,7 @@ use super::TextLayout;
 use crate::terminal_hyperlinks::HyperlinkLine;
 use crate::terminal_hyperlinks::adaptive_wrap_hyperlink_lines;
 use crate::terminal_hyperlinks::prefix_hyperlink_lines;
+use crate::text_selection::SelectionUnit;
 use crate::wrapping::RtOptions;
 use pretty_assertions::assert_eq;
 use ratatui::buffer::Buffer;
@@ -28,7 +29,7 @@ fn copying_wrapped_text_preserves_only_hard_newlines() {
         (11, 1),
     );
     assert_eq!(
-        &layout.text()[layout.line_range(/*offset*/ 12)],
+        &layout.text()[SelectionUnit::Line.range(layout.text(), /*offset*/ 12)],
         "alpha beta gamma\n"
     );
 
@@ -69,7 +70,10 @@ fn hit_testing_uses_graphemes_and_does_not_select_padding() {
             .collect::<Vec<_>>(),
         vec![0, 1, 1, 4, 7, 7, 18, 18, 18, 18, 18, 18],
     );
-    assert_eq!(&layout.text()[layout.word_range(/*offset*/ 4)], "e\u{301}");
+    assert_eq!(
+        &layout.text()[SelectionUnit::Word.range(layout.text(), /*offset*/ 4)],
+        "e\u{301}"
+    );
 }
 
 #[test]
@@ -105,6 +109,37 @@ fn selection_highlights_wide_graphemes_without_trailing_padding() {
             .collect::<Vec<_>>(),
         vec![false, true, true, false, false, false, false, false],
     );
+}
+
+#[test]
+fn selected_newlines_respect_wrapping_and_synthetic_rows() {
+    for (width, expected) in [(8, vec![(6, 5)]), (4, vec![])] {
+        let layout = TextLayout::new(
+            vec!["".into(), "alpha beta  ".into(), "".into(), "界".into()],
+            width,
+        )
+        .with_disclosure_control_at("details".into(), /*source_offset*/ 0)
+        .with_leading_separator();
+        let area = Rect::new(/*x*/ 2, /*y*/ 1, width, /*height*/ 9);
+        let mut buffer = Buffer::empty(area);
+        layout.render(area, &mut buffer, /*start_row*/ 0);
+        for range in [0..1, 13..15] {
+            layout.highlight_selection(
+                range,
+                /*next*/ None,
+                area,
+                &mut buffer,
+                /*start_row*/ 0,
+            );
+        }
+        assert_eq!(
+            (area.top()..area.bottom())
+                .flat_map(|y| (area.left()..area.right()).map(move |x| (x, y)))
+                .filter(|&(x, y)| buffer[(x, y)].modifier.contains(Modifier::REVERSED))
+                .collect::<Vec<_>>(),
+            expected,
+        );
+    }
 }
 
 #[test]
@@ -151,8 +186,8 @@ fn empty_logical_lines_keep_their_hard_breaks() {
         (
             layout.text(),
             layout.row_count(),
-            layout.line_range(/*offset*/ 0),
-            layout.line_range(/*offset*/ 5)
+            SelectionUnit::Line.range(layout.text(), /*offset*/ 0),
+            SelectionUnit::Line.range(layout.text(), /*offset*/ 5)
         ),
         ("\ntext\n", 3, 0..1, 1..6),
     );

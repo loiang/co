@@ -5,7 +5,7 @@ use super::markdown_render_cache::MarkdownRenderCache;
 use super::*;
 use crate::style::accent_color_on;
 use crate::style::history_prompt_style;
-use crate::terminal_hyperlinks::annotate_web_urls_in_line;
+use crate::terminal_hyperlinks::annotate_web_urls;
 use crate::terminal_hyperlinks::lines_with_sources_eq;
 use crate::terminal_hyperlinks::remap_source_wrapped_line;
 use crate::wrapping::url_preserving_wrap_options;
@@ -243,6 +243,7 @@ impl HistoryCell for UserHistoryCell {
         lines.push(HyperlinkLine::new(Line::from("").style(style)));
         for source in lines.iter_mut().filter_map(|line| line.source.as_mut()) {
             source.right_reserve = 1;
+            source.copy_as_prose = true;
         }
         lines
     }
@@ -289,18 +290,17 @@ fn wrap_user_message(
         build_user_message_lines_with_elements(message, text_elements, style, element_style)
     };
     let mut wrapped = crate::terminal_hyperlinks::adaptive_wrap_hyperlink_lines(
-        &plain_hyperlink_lines(logical_lines),
+        &annotate_web_urls(logical_lines),
         wrap_options,
     )
     .into_iter()
-    .flat_map(|mut line| {
+    .flat_map(|line| {
         if line.width() <= usize::from(wrap_width) {
             return vec![line];
         }
 
         // Terminal autowrap loses the message gutter and background. Explicitly split
         // oversized URL tokens while retaining their complete OSC-8 destination.
-        line.hyperlinks = annotate_web_urls_in_line(line.line.clone()).hyperlinks;
         let forced_lines = word_wrap_line_with_source(
             &line.line,
             url_preserving_wrap_options(RtOptions::new(usize::from(wrap_width)))
@@ -572,12 +572,12 @@ fn normalize_whitespace_only_hyperlink_lines(mut lines: Vec<HyperlinkLine>) -> V
     lines
 }
 
-impl HistoryCell for AgentMarkdownCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        visible_lines(self.display_hyperlink_lines(width))
-    }
-
-    fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
+impl AgentMarkdownCell {
+    fn render_lines(
+        &self,
+        width: u16,
+        list_spacing: crate::markdown_render::ListSpacing,
+    ) -> Vec<HyperlinkLine> {
         let render = || {
             let Some(wrap_width) =
                 crate::width::usable_content_width_u16(width, /*reserved_cols*/ 2)
@@ -591,11 +591,12 @@ impl HistoryCell for AgentMarkdownCell {
 
             // Re-render markdown from source at the current width. Reserve 2 columns for the "• " /
             // " " prefix prepended below.
-            let lines = crate::markdown::render_markdown_agent_with_links_cwd_and_visualizations(
+            let lines = crate::markdown::render_markdown_agent_with_list_spacing(
                 &self.markdown_source,
                 Some(wrap_width),
                 Some(self.cwd.as_path()),
                 self.inline_visualization_context.as_ref(),
+                list_spacing,
             );
             let lines = if self.spoken_artifacts {
                 let mut lines = lines;
@@ -612,10 +613,24 @@ impl HistoryCell for AgentMarkdownCell {
         };
 
         if let Some(rendered_lines) = &self.rendered_lines {
-            rendered_lines.render(width, render)
+            rendered_lines.render(width, list_spacing, render)
         } else {
             render()
         }
+    }
+}
+
+impl HistoryCell for AgentMarkdownCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        visible_lines(self.display_hyperlink_lines(width))
+    }
+
+    fn display_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {
+        self.render_lines(width, crate::markdown_render::ListSpacing::AfterMultiline)
+    }
+
+    fn retained_hyperlink_lines(&self, width: u16, _detailed: bool) -> Vec<HyperlinkLine> {
+        self.render_lines(width, crate::markdown_render::ListSpacing::Uniform)
     }
 
     fn transcript_hyperlink_lines(&self, width: u16) -> Vec<HyperlinkLine> {

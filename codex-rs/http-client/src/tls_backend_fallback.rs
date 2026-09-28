@@ -9,8 +9,8 @@ use std::error::Error;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crate::HttpClient;
 use crate::OutboundProxyRoute;
+use crate::client::TransportClient;
 
 const MAX_CACHED_RUSTLS_DESTINATIONS: usize = 16;
 // Schannel maps TLS alert 70 (protocol_version) to SEC_E_UNSUPPORTED_FUNCTION.
@@ -24,7 +24,7 @@ pub(crate) struct RustlsClientCache {
 #[derive(Default)]
 struct RustlsClientCacheState {
     destinations: HashSet<DestinationRoute>,
-    clients: HashMap<OutboundProxyRoute, HttpClient>,
+    clients: HashMap<OutboundProxyRoute, TransportClient>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -46,7 +46,7 @@ impl RustlsClientCache {
             .contains(&destination)
     }
 
-    pub(crate) fn client_for_route(&self, route: &OutboundProxyRoute) -> Option<HttpClient> {
+    pub(crate) fn client_for_route(&self, route: &OutboundProxyRoute) -> Option<TransportClient> {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -59,7 +59,7 @@ impl RustlsClientCache {
         &self,
         url: &reqwest::Url,
         route: &OutboundProxyRoute,
-        client: HttpClient,
+        client: TransportClient,
     ) {
         let Some(destination) = DestinationRoute::new(url, route) else {
             return;
@@ -105,6 +105,14 @@ pub(crate) fn should_retry_with_rustls(error: &reqwest::Error) -> bool {
     error.is_connect() && !error.is_timeout() && error.source().is_some_and(has_retryable_tls_error)
 }
 
+pub(crate) fn is_tls_error(error: &(dyn Error + 'static)) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    error.downcast_ref::<rustls::Error>().is_some()
+        || error.downcast_ref::<native_tls::Error>().is_some()
+        // Hyper wraps this rustls certificate error in an opaque io::Error.
+        || message.contains("invalid peer certificate:")
+}
+
 fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
     let mut source = Some(error);
     let mut recognized_negotiation_failure = false;
@@ -132,6 +140,10 @@ fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
         let is_macos_protocol_version_error = message.contains("bad protocol version");
         // Linux OpenSSL reports the peer's "tlsv1 alert protocol version".
         let is_linux_protocol_version_error = message.contains("tlsv1 alert protocol version");
+        // The reqwest error path may retain either rustls' display or debug representation.
+        let is_wrapped_protocol_version_error = message
+            .contains("received fatal alert: protocolversion")
+            || message.contains("alertreceived(protocolversion)");
         // Windows Schannel may expose the protocol alert as a raw or formatted OS error.
         let is_schannel_protocol_version_error = error
             .downcast_ref::<std::io::Error>()
@@ -141,6 +153,7 @@ fn has_retryable_tls_error(error: &(dyn Error + 'static)) -> bool {
             || message.contains("0x80090302");
         if is_macos_protocol_version_error
             || is_linux_protocol_version_error
+            || is_wrapped_protocol_version_error
             || is_schannel_protocol_version_error
         {
             recognized_negotiation_failure = true;

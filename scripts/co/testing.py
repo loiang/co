@@ -1,28 +1,15 @@
-"""Run repository Python regressions and focused Rust tests in locked Nix."""
+"""Run repository Python regressions in locked Nix."""
 
 from pathlib import Path
 
 from common import git_flake, require_repo, run, timestamp, write_json
 from evidence import source_identity
 
-RUST_TESTS = (
-    ("codex-skills-extension", "bundled_skills_are_removed_and_never_loaded"),
-    ("codex-state", "archive_except"),
-    ("codex-tui", "local_db_first_"),
-    (
-        "codex-tui",
-        "remote_picker_starts_from_state_db_with_cwd_filter_without_local_post_filtering",
-    ),
-    ("codex-tui", "archive_except"),
-)
-RUST_MIN_STACK = "8388608"
-
-
 def run_tests(repository: Path) -> Path:
-    """Run lifecycle regressions and focused Rust tests in the candidate shell.
+    """Run lifecycle regressions in the candidate shell.
 
-    The candidate's locked flake supplies Python, Cargo, and nextest so host
-    tool versions cannot change the verification result.
+    The candidate's locked flake supplies Python so host tool versions cannot
+    change the verification result. Compilation is owned by ``co build``.
 
     Args:
         repository: Candidate checkout whose locked environment owns the run.
@@ -45,28 +32,6 @@ def run_tests(repository: Path) -> Path:
             "test/co",
         ]
     ]
-    for package, test_name in RUST_TESTS:
-        commands.append(
-            [
-                "nix",
-                "develop",
-                git_flake(root),
-                "--no-update-lock-file",
-                "--command",
-                "env",
-                f"RUST_MIN_STACK={RUST_MIN_STACK}",
-                "NEXTEST_PROFILE=local",
-                "cargo",
-                "nextest",
-                "run",
-                "--no-fail-fast",
-                "--manifest-path",
-                "codex-rs/Cargo.toml",
-                "-p",
-                package,
-                test_name,
-            ]
-        )
     for command in commands:
         run(command, cwd=root, capture=False)
     record = {

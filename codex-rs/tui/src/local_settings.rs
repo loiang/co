@@ -10,10 +10,12 @@ use crate::legacy_core::config::Config;
 use crate::legacy_core::config::TerminalResizeReflowConfig;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
 use crate::transcript_mode::TranscriptMode;
+use codex_config::types::CopyOnSelect;
 use codex_config::types::History;
 use codex_config::types::Notice;
 use codex_config::types::Tui;
-use codex_features::Feature;
+use codex_terminal_detection::TerminalInfo;
+use codex_terminal_detection::TerminalName;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -56,14 +58,15 @@ impl LocalSettings {
         };
         Self {
             transcript_mode: TranscriptMode::resolve(
-                config.features.enabled(Feature::TranscriptV2),
+                config.tui_fullscreen_transcript,
                 config.tui_alternate_screen != codex_config::types::AltScreenMode::Never,
             ),
             tui: Tui {
                 notification_settings: config.tui_notifications.clone(),
                 animations: animations && system_motion == crate::motion::MotionMode::Animated,
                 screen_reader_detection_done: None,
-                whimsy: config.tui_whimsy,
+                effects: config.tui_effects,
+                rendering: config.tui_rendering,
                 show_tooltips: config.show_tooltips,
                 show_server_version_notice: config.tui_show_server_version_notice,
                 auto_recap: config.tui_auto_recap,
@@ -71,6 +74,9 @@ impl LocalSettings {
                 vim_mode_default: config.tui_vim_mode_default,
                 question_esc_back: config.tui_question_esc_back,
                 raw_output_mode: config.tui_raw_output_mode,
+                fullscreen_transcript: config.tui_fullscreen_transcript,
+                copy_on_select: config.tui_copy_on_select,
+                right_click_paste: config.tui_right_click_paste,
                 alternate_screen: config.tui_alternate_screen,
                 status_line: config.tui_status_line.clone(),
                 status_line_use_colors: config.tui_status_line_use_colors,
@@ -119,6 +125,50 @@ impl LocalSettings {
         settings.transcript_mode = self.transcript_mode;
         settings.tui.alternate_screen = self.tui.alternate_screen;
         settings
+    }
+
+    /// Copy on release unless a direct terminal is known to forward its default copy shortcut.
+    /// Multiplexers, unknown terminals and Ghostty without a recognized version default to copying.
+    pub(crate) fn copy_on_select(&self, terminal: &TerminalInfo) -> bool {
+        match self.tui.copy_on_select {
+            CopyOnSelect::Always => true,
+            CopyOnSelect::Never => false,
+            CopyOnSelect::Auto => {
+                terminal.multiplexer.is_some()
+                    || match terminal.name {
+                        // Since 1.2, both Ghostty's Cmd-C and Ctrl-Shift-C bindings are
+                        // "performable": they forward the key if Ghostty has no selection.
+                        TerminalName::Ghostty => !terminal
+                            .version
+                            .as_deref()
+                            .and_then(|version| semver::Version::parse(version).ok())
+                            .is_some_and(|version| {
+                                version
+                                    >= semver::Version::new(
+                                        /*major*/ 1, /*minor*/ 2, /*patch*/ 0,
+                                    )
+                            }),
+                        // Kitty's Cmd-C uses copy_or_noop. Its Ctrl-Shift-C consumes the key.
+                        TerminalName::Kitty => !cfg!(target_os = "macos"),
+                        // Windows Terminal's Copy action forwards its key when unselected,
+                        // including when the CLI runs in WSL.
+                        TerminalName::WindowsTerminal => false,
+                        // VS Code gates Copy on native selection. Only Windows' default
+                        // (plain Ctrl-C) is also forwarded by the legacy xterm.js encoder.
+                        TerminalName::VsCode => !cfg!(target_os = "windows"),
+                        TerminalName::AppleTerminal
+                        | TerminalName::Iterm2
+                        | TerminalName::WarpTerminal
+                        | TerminalName::WezTerm
+                        | TerminalName::Alacritty
+                        | TerminalName::Konsole
+                        | TerminalName::GnomeTerminal
+                        | TerminalName::Vte
+                        | TerminalName::Dumb
+                        | TerminalName::Unknown => true,
+                    }
+            }
+        }
     }
 
     pub(crate) fn terminal_resize_reflow(&self) -> TerminalResizeReflowConfig {

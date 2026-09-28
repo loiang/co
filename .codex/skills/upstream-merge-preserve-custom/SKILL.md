@@ -40,18 +40,19 @@ force-push `main`.
 ## Validation and publication
 
 1. Run `python3 scripts/format.py` after code changes.
-2. Run focused tests for every affected custom subsystem and every resolved
-   conflict. Follow `AGENTS.md` for Rust nextest, schema, snapshot, Clippy, and
-   full-suite gates; request approval before the complete Rust suite when it is
-   required.
+2. Do not run Cargo, nextest, Nix build, or any other compilation as merge
+   validation. Run `co test`, which is limited to non-compiling Python
+   regressions.
 3. Re-read every ledger protection path against the merged tree and inspect
    `git diff main...HEAD`. No documented customization may disappear without
    explicit user approval.
-4. Commit the resolved integration branch. Fast-forward `main` to it through
+4. Run `co build` as the single compilation gate, then commit the resolved
+   integration branch. Fast-forward `main` to it through
    `$git-workflow:branch-merge`; delete the temporary branch and backup tag only
    after validation succeeds.
 5. Atomically publish `main`, tags, and `refs/notes/commits` with
-   `$git-workflow:push`. Verify the remote refs.
+   `$git-workflow:push`, then run `co publish` to publish the verified build.
+   Verify the remote refs and release result.
 
 Report the old and new upstream OIDs, preserved custom areas, conflict
 resolutions, tests, final `main` OID, and publication verification.

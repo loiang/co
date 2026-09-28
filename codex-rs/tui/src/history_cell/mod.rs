@@ -23,7 +23,6 @@ use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::legacy_core::config::Config;
 use crate::live_wrap::take_prefix_by_width;
-use crate::markdown::append_markdown;
 use crate::motion::MotionMode;
 use crate::motion::ReducedMotionIndicator;
 use crate::motion::activity_indicator;
@@ -124,6 +123,7 @@ mod startup_warnings;
 mod warnings;
 
 pub(crate) use activity_details::ActivityDetails;
+pub(crate) use activity_preview::ActivityDisclosure;
 pub(crate) use approvals::*;
 pub(crate) use base::*;
 pub(crate) use dynamic::DynamicToolCallCell;
@@ -235,6 +235,15 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         self.display_hyperlink_lines(width)
     }
 
+    /// Rich presentation in a viewport that can redraw previously visible rows.
+    fn retained_hyperlink_lines(&self, width: u16, detailed: bool) -> Vec<HyperlinkLine> {
+        if detailed {
+            self.transcript_hyperlink_lines(width)
+        } else {
+            self.compact_hyperlink_lines(width)
+        }
+    }
+
     /// Stable, namespaced member identities used to retain disclosure across grouping and replay.
     /// Empty identities indicate ordinary content without a local disclosure control.
     fn activity_ids(&self) -> Vec<String> {
@@ -246,10 +255,10 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         self.transcript_hyperlink_lines(width)
     }
 
-    /// Whether an activity offers details beyond its compact presentation.
+    /// Details an activity offers beyond its compact presentation, if any.
     /// Prefer source metadata so collapsed rendering does not materialize hidden content.
-    fn has_hidden_activity_details(&self, _width: u16) -> bool {
-        true
+    fn activity_disclosure(&self, _width: u16) -> Option<ActivityDisclosure> {
+        Some(ActivityDisclosure::Generic)
     }
 
     fn display_lines_for_mode(&self, width: u16, mode: HistoryRenderMode) -> Vec<Line<'static>> {

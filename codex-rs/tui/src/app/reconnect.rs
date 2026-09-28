@@ -51,7 +51,7 @@ pub(super) async fn reconnect(
     // Connecting already has transport deadlines. Give healthy history/inventory hydration one
     // shared budget instead of repeatedly discarding its progress on a short per-attempt timer.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(/*secs*/ 120);
-    for delay in [0, 1, 2, 4, 8] {
+    for delay in [0, 1, 2, 4].into_iter().chain(std::iter::repeat(/*elt*/ 8)) {
         let attempt = async {
             tokio::time::sleep(Duration::from_secs(delay)).await;
             let client = crate::app_server_connection::connect(&target).await?;
@@ -185,6 +185,10 @@ impl App {
             {
                 self.chat_widget.restore_user_message_to_composer(message);
             }
+            if let Some(owner) = self.background_voice.as_mut() {
+                owner.reset_realtime_conversation();
+            }
+            self.retire_background_voice();
             self.reconnect.offline = true;
             // Cached blank sessions are usable only while this connection owns a subscription.
             self.agents_overview.blank_sessions.clear();
@@ -271,6 +275,7 @@ impl App {
                 .view_state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.connection_notice = None;
             if state.creating_worktree {
                 state.creating_worktree = false;
                 self.pending_managed_worktree_creation = false;
@@ -443,9 +448,6 @@ impl App {
         // A hidden overview performs this discovery when it is next opened.
         self.agents_overview.initialized = false;
         if self.reconnect.presentation == ReconnectPresentation::Overview {
-            if let Ok(mut state) = self.agents_overview.view_state.lock() {
-                state.connection_notice = None;
-            }
             let threads = self
                 .agents_overview
                 .threads

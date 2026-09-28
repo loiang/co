@@ -247,6 +247,137 @@ class FetchCodexV8ArtifactsTest(unittest.TestCase):
             self._run(spec, cache_dir=cache_dir)
         urlopen.assert_not_called()
 
+    def test_verified_cache_needs_no_network(self) -> None:
+        spec, payloads, cache_dir, _urlopen = self.release_fixture(
+            "x86_64-unknown-linux-gnu"
+        )
+        self._populate_cache(cache_dir, payloads)
+        with patch.object(v8, "urlopen", side_effect=AssertionError("network")):
+            artifacts = self._run(spec, cache_dir=cache_dir)
+        self.assertEqual(
+            (artifacts.archive.read_bytes(), artifacts.binding.read_bytes()),
+            (payloads[artifacts.archive.name], payloads[artifacts.binding.name]),
+        )
+
+    def test_missing_or_corrupt_manifest_refresh_retains_valid_artifacts(self) -> None:
+        spec, payloads, cache_dir, urlopen = self.release_fixture(
+            "x86_64-unknown-linux-gnu"
+        )
+        artifacts = self._run(spec, cache_dir=cache_dir)
+        manifest = cache_dir / next(name for name in payloads if name.endswith(".sha256"))
+        expected = manifest.read_bytes()
+        for contents in (None, b"corrupt"):
+            with self.subTest(contents=contents):
+                if contents is None:
+                    manifest.unlink()
+                else:
+                    manifest.write_bytes(contents)
+                urlopen.reset_mock()
+                refreshed = self._run(spec, cache_dir=cache_dir)
+                self.assertEqual(refreshed, artifacts)
+                self.assertEqual(manifest.read_bytes(), expected)
+                self.assertEqual(urlopen.call_count, 1)
+
+    def test_cached_manifest_still_authenticates_both_artifacts(self) -> None:
+        spec, payloads, cache_dir, urlopen = self.release_fixture(
+            "x86_64-unknown-linux-gnu"
+        )
+        artifacts = self._run(spec, cache_dir=cache_dir)
+        artifacts.archive.write_bytes(b"corrupt archive")
+        artifacts.binding.write_bytes(b"corrupt binding")
+        urlopen.reset_mock()
+        repaired = self._run(spec, cache_dir=cache_dir)
+        self.assertEqual(repaired, artifacts)
+        self.assertEqual(
+            (repaired.archive.read_bytes(), repaired.binding.read_bytes()),
+            (payloads[repaired.archive.name], payloads[repaired.binding.name]),
+        )
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_changed_repository_pin_rejects_old_cache_and_bad_refresh(self) -> None:
+        spec, payloads, cache_dir, urlopen = self.release_fixture(
+            "x86_64-unknown-linux-gnu"
+        )
+        artifacts = self._run(spec, cache_dir=cache_dir)
+        manifest = cache_dir / next(name for name in payloads if name.endswith(".sha256"))
+        old_manifest = manifest.read_bytes()
+        pins = self.root / "third_party/v8/rusty_v8_150_4_0_release_manifests.sha256"
+        pins.write_text(f"{'0' * 64}  {manifest.name}\n")
+        urlopen.reset_mock()
+        with self.assertRaisesRegex(RuntimeError, "does not match its trusted SHA-256"):
+            self._run(spec, cache_dir=cache_dir)
+        self.assertEqual(urlopen.call_count, v8.MAX_DOWNLOAD_ATTEMPTS)
+        self.assertEqual(manifest.read_bytes(), old_manifest)
+        self.assertEqual(
+            (artifacts.archive.read_bytes(), artifacts.binding.read_bytes()),
+            (payloads[artifacts.archive.name], payloads[artifacts.binding.name]),
+        )
+
+    @unittest.skipIf(sys.platform == "win32", "requires unprivileged symlinks")
+    def test_symlink_manifest_is_replaced_without_writing_through_link(self) -> None:
+        spec, payloads, cache_dir, urlopen = self.release_fixture(
+            "x86_64-unknown-linux-gnu"
+        )
+        artifacts = self._run(spec, cache_dir=cache_dir)
+        manifest = cache_dir / next(name for name in payloads if name.endswith(".sha256"))
+        expected = manifest.read_bytes()
+        backing = manifest.with_suffix(".original")
+        manifest.rename(backing)
+        manifest.symlink_to(backing)
+        urlopen.reset_mock()
+        refreshed = self._run(spec, cache_dir=cache_dir)
+        self.assertEqual(refreshed, artifacts)
+        self.assertFalse(manifest.is_symlink())
+        self.assertEqual((manifest.read_bytes(), backing.read_bytes()), (expected, expected))
+        self.assertEqual(urlopen.call_count, 1)
+
+    def test_interrupted_refresh_preserves_cache(self) -> None:
+        class InterruptedResponse(io.BytesIO):
+            def read(self, size=-1):
+                if self.tell():
+                    raise OSError("interrupted download")
+                return super().read(size)
+
+        spec, payloads, cache_dir, _urlopen = self.release_fixture(
+            "x86_64-unknown-linux-gnu"
+        )
+        artifacts = self._run(spec, cache_dir=cache_dir)
+        manifest = cache_dir / next(name for name in payloads if name.endswith(".sha256"))
+        manifest.write_bytes(b"stale manifest")
+        with (
+            patch.object(v8, "urlopen", return_value=InterruptedResponse(b"partial")),
+            self.assertRaisesRegex(OSError, "interrupted download"),
+        ):
+            self._run(spec, cache_dir=cache_dir)
+        self.assertEqual(manifest.read_bytes(), b"stale manifest")
+        self.assertEqual(
+            (artifacts.archive.read_bytes(), artifacts.binding.read_bytes()),
+            (payloads[artifacts.archive.name], payloads[artifacts.binding.name]),
+        )
+        self.assertEqual(list(manifest.parent.glob(".*.tmp")), [])
+
+    def test_source_and_paired_overrides_do_not_touch_cache(self) -> None:
+        spec = TARGET_SPECS["x86_64-unknown-linux-gnu"]
+        for environ in (
+            {"V8_FROM_SOURCE": "1"},
+            {
+                "RUSTY_V8_ARCHIVE": "archive.a",
+                "RUSTY_V8_SRC_BINDING_PATH": "binding.rs",
+            },
+        ):
+            with (
+                self.subTest(environ=environ),
+                patch.object(
+                    v8,
+                    "fetch_codex_v8_artifacts",
+                    side_effect=AssertionError("unexpected fetch"),
+                ) as fetch,
+            ):
+                self.assertEqual(
+                    v8.resolve_codex_v8_cargo_env(spec, environ=environ), {}
+                )
+                fetch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

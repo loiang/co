@@ -27,7 +27,9 @@ use codex_state::SqliteConfig;
 use pretty_assertions::assert_eq;
 use pretty_assertions::assert_ne;
 
-async fn history_fixture(item_counts: &[usize]) -> Result<(App, tempfile::TempDir, SessionTarget)> {
+async fn history_fixture(
+    item_counts: &[usize],
+) -> Result<(Box<App>, tempfile::TempDir, SessionTarget)> {
     let mut app = make_test_app().await;
     let codex_home = tempdir()?;
     app.config.codex_home = codex_home.path().to_path_buf().abs();
@@ -247,9 +249,7 @@ async fn history_hydration_archived_retry_uses_first_attempt_runtime_settings() 
     ] {
         for mode in [TranscriptMode::Terminal, TranscriptMode::Owned] {
             let (mut app, codex_home, mut target) = history_fixture(&[500]).await?;
-            app.config
-                .features
-                .set_enabled(Feature::TranscriptV2, !mode.is_owned())?;
+            app.config.tui_fullscreen_transcript = !mode.is_owned();
             app.config.tui_alternate_screen = codex_config::types::AltScreenMode::Always;
             app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(1);
             app.local_settings = crate::local_settings::LocalSettings::from(&app.config);

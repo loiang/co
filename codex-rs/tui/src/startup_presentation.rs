@@ -12,16 +12,11 @@ use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLoadOptions;
 use codex_config::LoaderOverrides;
 use codex_config::TomlValue;
-use codex_features::Feature;
-use codex_features::FeatureConfigSource;
-use codex_features::FeatureOverrides;
-use codex_features::Features;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 use crate::Cli;
 use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::ConfigTomlLoadResult;
-use crate::legacy_core::config::ManagedFeatures;
 use crate::legacy_core::config::load_config_toml_with_layer_stack;
 use crate::startup_draft::StartupScreen;
 
@@ -56,33 +51,22 @@ pub(super) async fn load(
     )
     .await?;
     let config_toml = &bootstrap_config.config_toml;
-    let configured_features = Features::from_sources(
-        FeatureConfigSource {
-            features: config_toml.features.as_ref(),
-            experimental_use_unified_exec_tool: config_toml.experimental_use_unified_exec_tool,
-        },
-        FeatureConfigSource::default(),
-        FeatureOverrides::default(),
-    );
-    // Full configuration construction will publish its normal managed-feature warnings once.
-    let mut startup_warnings = Vec::new();
-    let features = ManagedFeatures::from_configured_with_warnings(
-        configured_features,
-        bootstrap_config
-            .config_layer_stack
-            .requirements()
-            .feature_requirements
-            .clone(),
-        &mut startup_warnings,
-    )?;
     let alternate_screen = config_toml
         .tui
         .as_ref()
         .map(|tui| tui.alternate_screen)
         .unwrap_or_default();
-    let use_alt_screen = crate::determine_alt_screen_mode(cli.no_alt_screen, alternate_screen);
+    // Terminal probing happens after configuration loads; startup finalizes this before painting.
+    let use_alt_screen = crate::determine_alt_screen_mode(
+        cli.no_alt_screen,
+        alternate_screen,
+        /*terminal_app_over_ssh*/ false,
+    );
     let transcript_mode = crate::transcript_mode::TranscriptMode::resolve(
-        features.enabled(Feature::TranscriptV2),
+        config_toml
+            .tui
+            .as_ref()
+            .is_none_or(|tui| tui.fullscreen_transcript),
         use_alt_screen,
     );
     let status_line_enabled = config_toml
@@ -97,6 +81,13 @@ pub(super) async fn load(
         .disable_paste_burst
         .or(config_toml.disable_paste_burst)
         .unwrap_or(/*default*/ false);
+    let welcome_motion = crate::motion::MotionMode::from_animations_enabled(
+        config_toml
+            .tui
+            .as_ref()
+            .is_none_or(|tui| tui.animations && tui.effects.welcome)
+            && crate::system_motion::mode() == crate::motion::MotionMode::Animated,
+    );
     Ok(StartupPresentation {
         bootstrap_config,
         config_cwd,
@@ -104,6 +95,7 @@ pub(super) async fn load(
             use_alt_screen,
             transcript_mode,
             status_line_enabled,
+            welcome_motion,
             keymap,
             disable_paste_burst,
         },

@@ -5,12 +5,12 @@ use super::*;
 use pretty_assertions::assert_eq;
 use ratatui::buffer::Buffer;
 
-fn has_logo(buffer: &Buffer) -> bool {
-    buffer.content.iter().any(|cell| {
-        cell.symbol()
-            .chars()
-            .any(|c| ('\u{2801}'..='\u{28ff}').contains(&c))
-    })
+fn has_blossom(tui: &tui::Tui) -> bool {
+    text(crate::custom_terminal::test_support::last_rendered_buffer(
+        &tui.terminal,
+    ))
+    .chars()
+    .any(|ch| ('\u{2801}'..='\u{28ff}').contains(&ch))
 }
 
 fn text(buffer: &Buffer) -> String {
@@ -40,8 +40,6 @@ fn draw(app: &mut App, tui: &mut tui::Tui, size: Size) -> Result<Rect> {
 async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
     let mut app = crate::app::test_support::make_test_app().await;
     app.local_settings.tui.animations = true;
-    app.chat_widget
-        .apply_external_edit("preserved draft".into());
     let size = Size::new(/*width*/ 120, /*height*/ 44);
     let mut tui = crate::tui::test_support::make_test_tui()?;
     tui.set_owned_screen(/*owned*/ true)?;
@@ -52,56 +50,37 @@ async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
         .start_fresh();
     draw(&mut app, &mut tui, size)?;
     let cursor = tui.terminal.last_known_cursor_pos;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
 
     app.open_transcript_overlay(&mut tui);
     draw(&mut app, &mut tui, size)?;
-    let detailed = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
-    assert!(!has_logo(detailed));
+    assert!(!has_blossom(&tui));
     assert_eq!(tui.terminal.last_known_cursor_pos, cursor);
     app.close_transcript_overlay(&mut tui);
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
 
     app.transcript_view.begin_search();
     draw(&mut app, &mut tui, size)?;
-    assert!(!has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(!has_blossom(&tui));
     app.transcript_view.handle_key(
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
         &app.transcript_cells,
     );
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
 
     for enabled in [true, false] {
         app.apply_raw_output_mode(&mut tui, enabled, /*notify*/ false);
         draw(&mut app, &mut tui, size)?;
-        assert_eq!(
-            has_logo(crate::custom_terminal::test_support::last_rendered_buffer(
-                &tui.terminal
-            )),
-            !enabled
-        );
+        assert_eq!(has_blossom(&tui), !enabled);
     }
     app.chat_widget.apply_external_edit(String::new());
     for (key, visible) in [(KeyCode::Char('?'), false), (KeyCode::Right, true)] {
         app.chat_widget
             .handle_key_event(KeyEvent::new(key, KeyModifiers::NONE));
         draw(&mut app, &mut tui, size)?;
-        assert_eq!(
-            has_logo(crate::custom_terminal::test_support::last_rendered_buffer(
-                &tui.terminal
-            )),
-            visible
-        );
+        assert_eq!(has_blossom(&tui), visible);
     }
     tui.set_owned_screen(/*owned*/ false)?;
     Ok(())
@@ -111,7 +90,8 @@ async fn fresh_logo_returns_only_to_the_ordinary_composer() -> Result<()> {
 async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
     let mut app = crate::app::test_support::make_test_app().await;
     app.local_settings.tui.animations = true;
-    let size = Size::new(/*width*/ 120, /*height*/ 44);
+    // Leave room for the full release-note card above the centered logo.
+    let size = Size::new(/*width*/ 120, /*height*/ 64);
     let mut tui = crate::tui::test_support::make_test_tui()?;
     tui.set_owned_screen(/*owned*/ true)?;
     app.chat_widget
@@ -151,15 +131,11 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
     app.insert_history_cell(
         &mut tui,
         Box::new(history_cell::SessionNoticeCell(
-            history_cell::PlainHistoryCell::new(vec![
-                "Previous session usage and resume hint".into(),
-            ]),
+            history_cell::PlainHistoryCell::new(vec!["Rate limit reset notice".into()]),
         )),
     );
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
 
     crate::chatwidget::tests::set_chatgpt_auth(&mut app.chat_widget);
     let request = app.chat_widget.start_rate_limit_reset_startup_check();
@@ -174,14 +150,10 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
     // The same startup notice stays eligible both pending and committed to history.
     assert!(app.chat_widget.empty_state_composer().is_some());
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
     app.insert_pending_usage_output_if_ready(&mut tui);
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
 
     // Even invisible non-startup content ends eligibility before a frame or clear can erase it.
     app.insert_history_cell(
@@ -191,30 +163,32 @@ async fn non_startup_history_dismisses_logo_until_a_new_thread() -> Result<()> {
     app.reset_transcript_state_after_clear();
     app.queue_clear_ui_header(&mut tui);
     draw(&mut app, &mut tui, size)?;
-    assert!(!has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(!has_blossom(&tui));
     app.chat_widget
         .empty_state_animation
         .borrow_mut()
         .start_fresh();
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
     tui.set_owned_screen(/*owned*/ false)?;
     Ok(())
 }
 
 #[tokio::test]
-async fn empty_state_animation_preserves_header_draft_cursor_and_footer() -> Result<()> {
+async fn empty_state_animation_preserves_header_cursor_and_footer() -> Result<()> {
     let mut app = crate::app::test_support::make_test_app().await;
     app.local_settings.tui.animations = true;
-    app.chat_widget
-        .apply_external_edit("draft stays here".to_string());
     let size = Size::new(/*width*/ 120, /*height*/ 44);
     let mut tui = crate::tui::test_support::make_test_tui()?;
     tui.set_owned_screen(/*owned*/ true)?;
+    app.chat_widget
+        .empty_state_animation
+        .borrow()
+        .greeting
+        .set(crate::empty_state_animation::Greeting {
+            phrase: "Pull up a prompt.",
+        })
+        .expect("initial greeting");
     app.queue_clear_ui_header(&mut tui);
     app.transcript_cells
         .push(Arc::new(history_cell::StartupWarningsCell::mcp(
@@ -226,51 +200,76 @@ async fn empty_state_animation_preserves_header_draft_cursor_and_footer() -> Res
     let history_len = app.transcript_cells.len();
     let before = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal).clone();
     let cursor = tui.terminal.last_known_cursor_pos;
-    assert!(!has_logo(&before));
-    *app.chat_widget.empty_state_animation.borrow_mut() =
-        crate::empty_state_animation::tests::fixture().0;
+    assert!(!has_blossom(&tui));
+    app.chat_widget
+        .empty_state_animation
+        .borrow_mut()
+        .start_fresh();
     assert_eq!(draw(&mut app, &mut tui, size)?, before_bottom);
     let after = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
-    assert!(has_logo(after));
+    assert!(has_blossom(&tui));
     assert_eq!(tui.terminal.last_known_cursor_pos, cursor);
-    for (a, b) in before.content.iter().zip(&after.content) {
-        if a.symbol() != " " {
-            assert_eq!(a, b);
-        }
-    }
+    assert!(text(&before).contains("Pull up a prompt."));
     assert_eq!(
         &after.content[after.index_of(/*x*/ 0, before_bottom.y)..],
         &before.content[before.index_of(/*x*/ 0, before_bottom.y)..]
     );
-    insta::assert_snapshot!("fresh_thread_with_draft", text(after));
+    insta::assert_snapshot!(
+        "fresh_thread_header",
+        format!(
+            "enabled:\n{}\n---\ndisabled:\n{}",
+            text(after),
+            text(&before)
+        )
+    );
+    // Editing, clearing, and resizing must never choose another phrase.
+    let phrase_pos = after
+        .content
+        .iter()
+        .position(|cell| cell.symbol() == "P")
+        .expect("the phrase is visible above the composer");
+    assert_eq!(after.content[phrase_pos].fg, crate::style::accent_color());
+
+    let short = Size::new(/*width*/ 120, /*height*/ 12);
+    draw(&mut app, &mut tui, short)?;
+    assert!(!has_blossom(&tui));
+    draw(&mut app, &mut tui, size)?;
+    assert!(has_blossom(&tui));
 
     app.chat_widget.apply_external_edit("/m".to_string());
     draw(&mut app, &mut tui, size)?;
-    assert!(!has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
-    app.chat_widget
-        .apply_external_edit("draft stays here".to_string());
+    assert!(!has_blossom(&tui));
+    app.chat_widget.apply_external_edit(String::new());
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
+    assert!(
+        text(crate::custom_terminal::test_support::last_rendered_buffer(
+            &tui.terminal
+        ))
+        .contains("Pull up a prompt.")
+    );
     assert_eq!(app.transcript_cells.len(), history_len);
     app.local_settings.tui.animations = false;
     draw(&mut app, &mut tui, size)?;
     let disabled = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
     assert_eq!(disabled, &before);
     app.local_settings.tui.animations = true;
+    app.local_settings.tui.effects.welcome = false;
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert_eq!(
+        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal),
+        &before
+    );
+    app.local_settings.tui.effects.welcome = true;
+    app.local_settings.tui.effects.shimmer = false;
+    draw(&mut app, &mut tui, size)?;
+    assert!(has_blossom(&tui));
     tui.set_owned_screen(/*owned*/ false)?;
     Ok(())
 }
 
 #[tokio::test]
-async fn submitting_a_draft_dismisses_logo_even_after_clear() -> Result<()> {
+async fn submitting_a_draft_keeps_greeting_and_dismisses_logo_even_after_clear() -> Result<()> {
     let (mut app, _events, _ops) = crate::app::tests::make_test_app_with_channels().await;
     app.local_settings.tui.animations = true;
     let size = Size::new(/*width*/ 120, /*height*/ 44);
@@ -282,26 +281,42 @@ async fn submitting_a_draft_dismisses_logo_even_after_clear() -> Result<()> {
         .borrow_mut()
         .start_fresh();
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(has_blossom(&tui));
+    let greeting = *app
+        .chat_widget
+        .empty_state_animation
+        .borrow()
+        .greeting
+        .get()
+        .expect("choose a greeting for the fresh thread");
     app.chat_widget
         .apply_external_edit("first prompt".to_string());
     draw(&mut app, &mut tui, size)?;
     let drafting = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
-    assert!(has_logo(drafting));
+    assert!(!has_blossom(&tui));
     assert!(text(drafting).contains("first prompt"));
+    assert!(text(drafting).contains(greeting.phrase));
+    app.chat_widget.apply_external_edit(String::new());
+    draw(&mut app, &mut tui, size)?;
+    assert!(has_blossom(&tui));
+    app.chat_widget
+        .apply_external_edit("first prompt".to_string());
     app.chat_widget
         .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     draw(&mut app, &mut tui, size)?;
-    assert!(!has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(!has_blossom(&tui));
+    let submitted = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
+    assert_eq!(text(submitted).matches(greeting.phrase).count(), 1);
+    // The header is also stable when it scrolls out and back into the viewport.
+    let short = Size::new(/*width*/ 120, /*height*/ 8);
+    draw(&mut app, &mut tui, short)?;
+    draw(&mut app, &mut tui, size)?;
+    let restored = crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal);
+    assert!(text(restored).contains(greeting.phrase));
+    assert!(!has_blossom(&tui));
     app.reset_transcript_state_after_clear();
     draw(&mut app, &mut tui, size)?;
-    assert!(!has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(!has_blossom(&tui));
     tui.set_owned_screen(/*owned*/ false)?;
     Ok(())
 }
@@ -341,12 +356,7 @@ async fn empty_state_animation_survives_plain_transcript_clicks() -> Result<()> 
             &app.transcript_cells,
         );
         draw(&mut app, &mut tui, size)?;
-        assert_eq!(
-            has_logo(crate::custom_terminal::test_support::last_rendered_buffer(
-                &tui.terminal
-            )),
-            visible
-        );
+        assert_eq!(has_blossom(&tui), visible);
         if visible {
             assert_eq!(tui.terminal.last_known_cursor_pos, cursor);
         }
@@ -358,9 +368,10 @@ async fn empty_state_animation_survives_plain_transcript_clicks() -> Result<()> 
     );
     app.transcript_view.end_selection(&app.transcript_cells);
     draw(&mut app, &mut tui, size)?;
-    assert!(has_logo(
-        crate::custom_terminal::test_support::last_rendered_buffer(&tui.terminal)
-    ));
+    assert!(!has_blossom(&tui));
+    app.transcript_view.jump_to_latest();
+    draw(&mut app, &mut tui, size)?;
+    assert!(has_blossom(&tui));
     tui.set_owned_screen(/*owned*/ false)?;
     Ok(())
 }
