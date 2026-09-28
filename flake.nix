@@ -122,6 +122,31 @@
         system:
         let
           pkgs = pkgsFor system;
+          ruff =
+            assert pkgs.lib.versionAtLeast pkgs.ruff.version "0.15.8";
+            pkgs.ruff;
+          bazel = pkgs.writeShellApplication {
+            name = "bazel";
+            runtimeInputs = [ pkgs.findutils ];
+            text =
+              builtins.replaceStrings
+                [
+                  "@bazelisk@"
+                  "@patchelf@"
+                  "@loader@"
+                  "@rpath@"
+                ]
+                [
+                  "${pkgs.bazelisk}/bin/bazelisk"
+                  "${pkgs.patchelf}/bin/patchelf"
+                  "${pkgs.glibc}/lib/ld-linux-x86-64.so.2"
+                  "${pkgs.lib.makeLibraryPath [
+                    pkgs.glibc
+                    pkgs.stdenv.cc.cc.lib
+                  ]}"
+                ]
+                (builtins.readFile ./nix/bazel_nix_wrapper.sh);
+          };
           rust = pkgs.rust-bin.stable.${rustToolchainVersion}.default.override {
             extensions = [
               "rust-analyzer"
@@ -139,20 +164,28 @@
             packages = [
               rust
               pkgs.cargo-nextest
+              pkgs.bazelisk
+              bazel
               pkgs.cmake
+              pkgs.dotslash
               pkgs.file
+              pkgs.git
               pkgs.llvmPackages.clang
               pkgs.llvmPackages.libclang.lib
               pkgs.nix-prefetch-git
               pkgs.openssl
               pkgs.pkg-config
-              pkgs.ruff
+              ruff
+              pkgs.uv
               python
             ];
             PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
             shellHook = ''
               export CO_NIX_DEV_ACTIVE=1
+              export CO_NIX_RUFF_BIN=${ruff}/bin/ruff
+              export BAZELISK_HOME="''${BAZELISK_HOME:-''${XDG_CACHE_HOME:-$HOME/.cache}/co-bazelisk}"
+              export BAZEL_OUTPUT_USER_ROOT="''${BAZEL_OUTPUT_USER_ROOT:-''${XDG_CACHE_HOME:-$HOME/.cache}/co-bazel}"
               export CARGO_HOME="''${XDG_CACHE_HOME:-$HOME/.cache}/co-cargo"
               export CC=clang
               export CXX=clang++

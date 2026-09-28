@@ -73,43 +73,47 @@ def buildifier_formatter_group(*, check: bool) -> FormatterGroup:
     return FormatterGroup("Bazel/Starlark", (Command(tuple(buildifier_args)),))
 
 
+def ruff_command(project: str, *, only_group: str | None = None) -> list[str]:
+    nix_ruff = os.environ.get("CO_NIX_RUFF_BIN")
+    if nix_ruff:
+        return [nix_ruff]
+    command = ["uv", "run", "--frozen", "--project", project]
+    if only_group:
+        command.extend(["--only-group", only_group])
+    command.append("ruff")
+    return command
+
+
 def python_sdk_formatter_group(*, check: bool) -> FormatterGroup:
-    # Each `--project` retains its local dependency and Ruff configuration context.
-    uv_run_args = [
-        "uv",
-        "run",
-        "--frozen",
-        "--project",
-        "sdk/python",
-        "--only-group",
-        "format",
-    ]
+    # NixOS cannot execute the generic Linux Ruff wheel. The Nix devShell
+    # provides a native Ruff binary; other environments retain the frozen uv
+    # project and its lockfile as the version source.
+    ruff_args = ruff_command("sdk/python", only_group="format")
     format_args = [
-        *uv_run_args,
-        "ruff",
+        *ruff_args,
         "format",
     ]
     if check:
         format_args.append("--check")
         # `ruff check --diff` reports lint-driven rewrites without changing files.
         # It is the check-mode counterpart of `--fix --fix-only`, not a full lint gate.
-        lint_args = ["ruff", "check", "--diff"]
+        lint_args = [*ruff_args, "check", "--diff"]
     else:
         # Ruff's lint fixer and formatter are separate passes: the first applies
         # fixable lint rewrites, while the second formats source layout.
-        lint_args = ["ruff", "check", "--fix", "--fix-only"]
+        lint_args = [*ruff_args, "check", "--fix", "--fix-only"]
 
     return FormatterGroup(
         "Python SDK",
         (
-            Command((*uv_run_args, *lint_args, "sdk/python")),
+            Command((*lint_args, "sdk/python")),
             Command((*format_args, "sdk/python")),
         ),
     )
 
 
 def python_scripts_formatter_group(*, check: bool) -> FormatterGroup:
-    args = ["uv", "run", "--frozen", "--project", "scripts", "ruff", "format"]
+    args = [*ruff_command("scripts"), "format"]
     if check:
         args.append("--check")
     args.append(".")
