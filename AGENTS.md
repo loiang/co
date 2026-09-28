@@ -8,6 +8,14 @@ upstream	https://github.com/openai/codex.git (push)
 
 In the codex-rs folder where the rust code lives:
 
+- Keep Cargo's `target/` directory by default. `cargo clean` only removes regenerable
+  compilation artifacts; the next Cargo build recreates them, while an unchanged toolchain,
+  target, profile, and dependency graph can reuse them for incremental compilation after a
+  merge. Do not add unconditional `cargo clean` calls to build workflows.
+- `target/` is not part of `/nix/store`, and `ni build` does not run Cargo for this repository;
+  do not use `cargo clean` to reclaim Nix store space or add it to `ni build`. Use the `ni gc`
+  workflow for `/nix/store`; use `cargo clean` only as an explicit, disk-pressure response.
+
 - Crate names are prefixed with `codex-`. For example, the `core` folder's crate is named `codex-core`
 - When using format! and you can inline variables into {}, always do that.
 - Install any commands the repo relies on (for example `cargo-nextest`, `rg`, or `cargo-insta`) if they aren't already available before running instructions here.
