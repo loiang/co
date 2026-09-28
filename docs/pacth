@@ -44,7 +44,7 @@
 - **用户可见行为**：`co` package 的 native build 只取 `codex-rs/repo/src`，使用独立的 `nix/repo-cargo/Cargo.toml` 与 `Cargo.lock`，因此 repository lifecycle CLI 的构建不再被完整 Codex workspace 的依赖锁或源码输入牵连。
 - **保护 / 测试路径**：`flake.nix` 将 `co` source 限定到 repo crate，`nix/repo.nix` 通过 `importCargoLock` 和 `postPatch` 使用独立 manifest/lock；包的 install check 运行 `$out/bin/co --help` 与 Python backend 的 `--help`。相关输入与 lifecycle 输出的回归在 `test/co/test_build.py`、`test/co/test_common.py`、`test/co/test_git_lifecycle.py`，独立锁文件为 `nix/repo-cargo/Cargo.lock`。
 
-## 本次 native lifecycle 变更（待提交）
+## native lifecycle 变更
 
 以下内容来自当前 worktree 的 local-vs-upstream diff，尚未形成最终 commit，因此不填写伪造的 commit hash。
 
