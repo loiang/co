@@ -3,4 +3,4 @@ store: co
 
 # Sync options
 maxFileSize: 1048576
-maxFileCount: 1000
+maxFileCount: 10000
