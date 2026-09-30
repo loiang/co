@@ -10,7 +10,7 @@ upstream	https://github.com/openai/codex.git (push)
 From the repository root, use this single command to reconstruct the locked project `nix develop` environment and build the release `co` binary without modifying `flake.lock`:
 
 ```sh
-nix develop --no-write-lock-file --command cargo build --release --locked --manifest-path codex-rs/Cargo.toml -p codex-repo --bin co
+nix develop --profile .nix-develop --no-write-lock-file --command cargo build --release --locked --manifest-path codex-rs/Cargo.toml -p codex-repo --bin co
 ```
 
 # Rust/codex-rs
