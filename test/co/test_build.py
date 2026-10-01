@@ -17,6 +17,26 @@ sys.path.insert(0, str(ROOT / "scripts" / "co"))
 from build import _official_version, build  # noqa: E402
 from common import LifecycleError, git, run, sha256  # noqa: E402
 
+REAL_SUBPROCESS_RUN = subprocess.run
+
+
+def _gh_run(
+    stdout: bytes = b'{"tag_name":"rust-v0.154.0","draft":false,"prerelease":false}',
+    *,
+    returncode: int = 0,
+    stderr: bytes = b"",
+) -> object:
+    """Return a subprocess boundary fake that delegates non-gh commands."""
+
+    def execute(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        if command[:2] == ["gh", "api"]:
+            return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+        return REAL_SUBPROCESS_RUN(command, **kwargs)
+
+    return execute
+
 
 @pytest.fixture
 def source_repo(tmp_path: Path) -> Path:
@@ -42,11 +62,16 @@ def test_official_version_resolves_latest_stable_rust_release() -> None:
     metadata = io.BytesIO(
         b'{"tag_name":"rust-v0.154.0","draft":false,"prerelease":false}'
     )
-    with patch("build.urlopen", return_value=metadata) as urlopen:
+    with patch(
+        "build.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            ["gh", "api"], 0, metadata.getvalue(), b""
+        ),
+    ) as gh_run:
         assert _official_version() == "0.154.0"
-    assert urlopen.call_args.args[0].full_url == (
-        "https://api.github.com/repos/openai/codex/releases/latest"
-    )
+    command = gh_run.call_args.args[0]
+    assert command[:3] == ["gh", "api", "repos/openai/codex/releases/latest"]
+    assert "token" not in " ".join(command).lower()
 
 
 def test_linux_gnu_native_tls_uses_vendored_openssl() -> None:
@@ -83,14 +108,65 @@ def test_linux_gnu_native_tls_uses_vendored_openssl() -> None:
         b'{"tag_name":"rust-v0.154.0-alpha.1","draft":false,"prerelease":true}',
         b'{"tag_name":"v0.154.0","draft":false,"prerelease":false}',
         b'{"tag_name":"rust-v0.154.0","draft":true,"prerelease":false}',
-        b"[]",
-        b"not JSON",
     ],
 )
 def test_official_version_rejects_invalid_release(metadata: bytes) -> None:
     with (
-        patch("build.urlopen", return_value=io.BytesIO(metadata)),
+        patch(
+            "build.subprocess.run",
+            return_value=subprocess.CompletedProcess(["gh", "api"], 0, metadata, b""),
+        ),
         pytest.raises(LifecycleError, match="stable release"),
+    ):
+        _official_version()
+
+
+def test_official_version_rejects_malformed_json() -> None:
+    with (
+        patch(
+            "build.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                ["gh", "api"], 0, b"not JSON", b""
+            ),
+        ),
+        pytest.raises(LifecycleError, match="不是有效 JSON"),
+    ):
+        _official_version()
+
+
+def test_official_version_rejects_non_object_json() -> None:
+    with (
+        patch(
+            "build.subprocess.run",
+            return_value=subprocess.CompletedProcess(["gh", "api"], 0, b"[]", b""),
+        ),
+        pytest.raises(LifecycleError, match="不是 JSON object"),
+    ):
+        _official_version()
+
+
+def test_official_version_rejects_missing_gh() -> None:
+    with (
+        patch("build.subprocess.run", side_effect=FileNotFoundError),
+        pytest.raises(LifecycleError, match="gh CLI 不可用"),
+    ):
+        _official_version()
+
+
+@pytest.mark.parametrize(
+    ("stderr", "message"),
+    [
+        (b"not logged into any GitHub hosts", "gh CLI 未认证"),
+        (b"API rate limit exceeded", "gh api 查询官方 latest stable release 失败"),
+    ],
+)
+def test_official_version_rejects_gh_failure(stderr: bytes, message: str) -> None:
+    with (
+        patch(
+            "build.subprocess.run",
+            return_value=subprocess.CompletedProcess(["gh", "api"], 1, b"", stderr),
+        ),
+        pytest.raises(LifecycleError, match=message),
     ):
         _official_version()
 
@@ -139,10 +215,8 @@ def test_build_uses_official_package_and_emits_bound_assets(
         patch("native_package.resolve_make_bin", return_value=binary),
         patch("bwrap.resolve_bwrap_binary", return_value=binary),
         patch(
-            "build.urlopen",
-            return_value=io.BytesIO(
-                b'{"tag_name":"rust-v0.154.0","draft":false,"prerelease":false}'
-            ),
+            "build.subprocess.run",
+            side_effect=_gh_run(),
         ),
     ):
         latest = build(source_repo, cores)

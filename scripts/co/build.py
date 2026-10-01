@@ -2,9 +2,9 @@
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
 
 from common import (
     LifecycleError,
@@ -17,9 +17,7 @@ from common import (
 from evidence import source_identity
 from native_package import NativePackage, PackageRequest, build_package
 
-OFFICIAL_LATEST_RELEASE_URL = (
-    "https://api.github.com/repos/openai/codex/releases/latest"
-)
+_OFFICIAL_RELEASE_API = "repos/openai/codex/releases/latest"
 _MAX_RELEASE_METADATA_BYTES = 1024 * 1024
 _STABLE_RELEASE_TAG = re.compile(
     r"rust-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
@@ -28,19 +26,39 @@ _STABLE_RELEASE_TAG = re.compile(
 
 def _official_version() -> str:
     """Resolve the stable upstream version once for a reproducible build input."""
-    request = Request(
-        OFFICIAL_LATEST_RELEASE_URL,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "loiang-co-build",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
     try:
-        with urlopen(request, timeout=30) as response:
-            raw_metadata = response.read(_MAX_RELEASE_METADATA_BYTES + 1)
-    except OSError as error:
-        raise LifecycleError("无法解析官方 latest stable release") from error
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                _OFFICIAL_RELEASE_API,
+                "--header",
+                "Accept: application/vnd.github+json",
+                "--header",
+                "X-GitHub-Api-Version: 2022-11-28",
+            ],
+            check=False,
+            capture_output=True,
+        )
+    except FileNotFoundError as error:
+        raise LifecycleError("gh CLI 不可用；请安装 GitHub CLI") from error
+    if result.returncode:
+        stderr = (result.stderr or b"").decode(errors="replace").lower()
+        if any(
+            marker in stderr
+            for marker in (
+                "not logged into",
+                "authentication",
+                "bad credentials",
+                "requires authentication",
+                "401",
+            )
+        ):
+            raise LifecycleError("gh CLI 未认证或认证已失效；请先完成 gh auth login")
+        raise LifecycleError(
+            f"gh api 查询官方 latest stable release 失败 (exit {result.returncode})"
+        )
+    raw_metadata = result.stdout or b""
     if len(raw_metadata) > _MAX_RELEASE_METADATA_BYTES:
         raise LifecycleError("官方 latest stable release metadata 超过 1 MiB")
     try:

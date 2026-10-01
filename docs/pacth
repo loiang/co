@@ -1,6 +1,12 @@
 # `co` custom patch ledger
 
-本页只记录相对 `upstream/main` 的本地自定义功能。每项同时给出 commit、用户可见行为，以及当前源码中的保护和测试路径。比较基线为 `upstream/main` 的 `44fe510ce3ee61c8ef623adcbf89b901c73ddd61`；该基线本身不属于本地 patch。
+本页只记录相对 `upstream/main` 的本地自定义功能。每项同时给出 commit、用户可见行为，以及当前源码中的保护和测试路径。比较基线为 `upstream/main` 的 `444da310e108da16aaeb18fd790b0ac464f08aca`；该基线本身不属于本地 patch。
+
+## 2026-10-01 — upstream `444da310e108da16aaeb18fd790b0ac464f08aca` 合并保留记录
+
+- **基线推进**：从共同祖先 `44fe510ce3ee61c8ef623adcbf89b901c73ddd61` 合并官方 `upstream/main`；本节仅记录已回读的 upstream OID 与本次实际冲突解析，不将待创建的集成提交伪记为历史自定义 commit。
+- **冲突保留**：`.github/actions/setup-ci/action.yml` 吸收上游其余 CI 变化但继续不安装 Just，因为 native `co` lifecycle 已替代 Just 入口。`codex-rs/core/BUILD.bazel` 保留 `//:AGENTS.md` 为 remote Bazel test data。`codex-rs/tui/src/app/tests.rs` 同时注册本地 `archive_except_lifecycle_tests` 与上游 `mcp_login_tests`、`security_setup_tests`，并删除上游已移除的 `daybreak_tests` 注册及文件。上游删除的根 `AGENTS.md` 与 `.codex/environments/environment.toml`、仓库本地 `.codex/skills/` 保持为 fork 治理契约。
+- **回读保护点**：archive-except 的生命周期测试注册在 `codex-rs/tui/src/app/tests.rs`，实现测试在 `codex-rs/tui/src/app/tests/archive_except_lifecycle_tests.rs`；TUI 执行防护位于 `codex-rs/tui/src/chatwidget/archive_except.rs`，而 `codex-rs/tui/src/chatwidget.rs` 必须继续声明该 module。其余 native lifecycle、`--locked`、vendored TLS、V8 cache、`bwrap`、`co sync` 和 installed backend 保护路径继续按本 ledger 的对应条目回读。
 
 ## 2026-09-28 — upstream `44fe510ce3ee61c8ef623adcbf89b901c73ddd61` 合并保留记录
 
