@@ -3,17 +3,21 @@
 import json
 import os
 import re
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.request import Request, urlopen
 
 from common import LifecycleError, sha256
 from package_verification import extract_single_executable
 
-RELEASE_API = "https://api.github.com/repos/openai/codex/releases/tags"
+RELEASE_API = "repos/openai/codex/releases/tags"
+_BROWSER_DOWNLOAD_PREFIX = "https://github.com/openai/codex/releases/download/"
 _TAG_PATTERN = re.compile(r"rust-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 _DIGEST_PATTERN = re.compile(r"^sha256:([0-9a-f]{64})$")
+_ASSET_URL_PATTERN = re.compile(
+    r"https://api\.github\.com/repos/openai/codex/releases/assets/[1-9][0-9]*"
+)
 _ARCHITECTURES = {"x86_64", "aarch64"}
 _MAX_METADATA_BYTES = 1024 * 1024
 _MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -39,9 +43,7 @@ def resolve_bwrap_asset(version: str, target: str) -> BwrapAsset:
     Codex cannot silently come from different upstream releases. GitHub's
     signed asset digest is the trust boundary for the downloaded archive.
     """
-    tag = f"rust-v{version}"
-    if _TAG_PATTERN.fullmatch(tag) is None:
-        raise LifecycleError(f"官方 Codex version 无效: {version}")
+    tag = _release_tag(version)
     architecture = _target_architecture(target)
     name = f"bwrap-{architecture}-unknown-linux-musl.tar.gz"
     metadata = _fetch_release_metadata(tag)
@@ -61,7 +63,8 @@ def resolve_bwrap_asset(version: str, target: str) -> BwrapAsset:
         raise LifecycleError(f"bwrap release 必须唯一提供 asset: {name}")
     asset = matches[0]
     digest = asset.get("digest")
-    url = asset.get("browser_download_url")
+    api_url = asset.get("url")
+    browser_url = asset.get("browser_download_url")
     size = asset.get("size")
     match = _DIGEST_PATTERN.fullmatch(str(digest))
     if (
@@ -70,11 +73,13 @@ def resolve_bwrap_asset(version: str, target: str) -> BwrapAsset:
         or isinstance(size, bool)
         or size <= 0
         or size > _MAX_ARCHIVE_BYTES
-        or not isinstance(url, str)
-        or not url.startswith("https://github.com/openai/codex/releases/download/")
+        or not isinstance(api_url, str)
+        or _ASSET_URL_PATTERN.fullmatch(api_url) is None
+        or not isinstance(browser_url, str)
+        or browser_url != f"{_BROWSER_DOWNLOAD_PREFIX}{tag}/{name}"
     ):
         raise LifecycleError(f"bwrap asset metadata 不可信: {name}")
-    return BwrapAsset(version, tag, architecture, name, url, size, match.group(1))
+    return BwrapAsset(version, tag, architecture, name, api_url, size, match.group(1))
 
 
 def resolve_bwrap_binary(
@@ -110,20 +115,15 @@ def _target_architecture(target: str) -> str:
     return architecture
 
 
+def _release_tag(version: str) -> str:
+    tag = f"rust-v{version}"
+    if _TAG_PATTERN.fullmatch(tag) is None:
+        raise LifecycleError(f"官方 Codex version 无效: {version}")
+    return tag
+
+
 def _fetch_release_metadata(tag: str) -> dict[str, object]:
-    request = Request(
-        f"{RELEASE_API}/{tag}",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "loiang-co-build",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
-    try:
-        with urlopen(request, timeout=30) as response:
-            raw = response.read(_MAX_METADATA_BYTES + 1)
-    except OSError as error:
-        raise LifecycleError(f"无法读取官方 bwrap release: {tag}") from error
+    raw = _gh_api(f"{RELEASE_API}/{tag}", "application/vnd.github+json")
     if len(raw) > _MAX_METADATA_BYTES:
         raise LifecycleError("bwrap release metadata 超过 1 MiB")
     try:
@@ -133,6 +133,34 @@ def _fetch_release_metadata(tag: str) -> dict[str, object]:
     if not isinstance(metadata, dict):
         raise LifecycleError("bwrap release metadata 必须是 JSON object")
     return metadata
+
+
+def _gh_api(endpoint: str, accept: str) -> bytes:
+    """Run one authenticated GitHub API request without exposing credentials."""
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                endpoint,
+                "--header",
+                f"Accept: {accept}",
+                "--header",
+                "X-GitHub-Api-Version: 2022-11-28",
+            ],
+            check=False,
+            capture_output=True,
+        )
+    except FileNotFoundError as error:
+        raise LifecycleError("gh CLI 不可用；请安装 GitHub CLI") from error
+    except OSError as error:
+        raise LifecycleError("gh CLI 执行失败") from error
+    if result.returncode:
+        raise LifecycleError(f"gh CLI 请求失败 (exit {result.returncode})")
+    raw = result.stdout
+    if not isinstance(raw, bytes):
+        raise LifecycleError("gh CLI 返回非 binary payload")
+    return raw
 
 
 def _valid_cached_archive(path: Path, asset: BwrapAsset) -> bool:
@@ -156,13 +184,11 @@ def _download_archive(asset: BwrapAsset, destination: Path) -> None:
             delete=False,
         ) as output:
             temporary = Path(output.name)
-            with urlopen(asset.url, timeout=60) as response:
-                size = 0
-                while block := response.read(1024 * 1024):
-                    size += len(block)
-                    if size > asset.size or size > _MAX_ARCHIVE_BYTES:
-                        raise LifecycleError("bwrap release asset 超过声明大小")
-                    output.write(block)
+            raw = _gh_api(asset.url, "application/octet-stream")
+            size = len(raw)
+            if size > asset.size or size > _MAX_ARCHIVE_BYTES:
+                raise LifecycleError("bwrap release asset 超过声明大小")
+            output.write(raw)
             output.flush()
             os.fsync(output.fileno())
         if size != asset.size or sha256(temporary) != asset.digest:

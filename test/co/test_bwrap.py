@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
@@ -15,7 +16,12 @@ sys.path.insert(0, str(ROOT / "scripts" / "co"))
 sys.path.insert(0, str(ROOT / "scripts"))
 os.environ.setdefault("CODEX_REPO_ROOT", str(ROOT))
 
-from bwrap import BwrapAsset, fetch_bwrap_binary, resolve_bwrap_asset  # noqa: E402
+from bwrap import (  # noqa: E402
+    BwrapAsset,
+    fetch_bwrap_binary,
+    resolve_bwrap_asset,
+    resolve_bwrap_binary,
+)
 from common import LifecycleError, sha256  # noqa: E402
 from codex_package.cargo import build_source_binaries  # noqa: E402
 from codex_package.targets import PACKAGE_VARIANTS, TARGET_SPECS  # noqa: E402
@@ -24,6 +30,7 @@ from codex_package.targets import PACKAGE_VARIANTS, TARGET_SPECS  # noqa: E402
 VERSION = "0.155.1"
 TAG = f"rust-v{VERSION}"
 ARCHIVE_NAME = "bwrap-x86_64-unknown-linux-musl.tar.gz"
+ASSET_API_URL = "https://api.github.com/repos/openai/codex/releases/assets/123"
 
 
 def _archive_bytes(
@@ -51,7 +58,7 @@ def _asset(data: bytes, *, tag: str = TAG, digest: str | None = None) -> BwrapAs
         tag,
         "x86_64",
         ARCHIVE_NAME,
-        f"https://github.com/openai/codex/releases/download/{tag}/{ARCHIVE_NAME}",
+        ASSET_API_URL,
         len(data),
         digest or sha256_bytes(data),
     )
@@ -74,6 +81,7 @@ def _metadata(*, tag: str = TAG, digest: str = "0" * 64, size: int = 1) -> bytes
                     "name": ARCHIVE_NAME,
                     "size": size,
                     "digest": f"sha256:{digest}",
+                    "url": ASSET_API_URL,
                     "browser_download_url": (
                         f"https://github.com/openai/codex/releases/download/{tag}/{ARCHIVE_NAME}"
                     ),
@@ -103,17 +111,21 @@ def test_resolves_exact_release_tag_and_target_architecture(
         f"https://github.com/openai/codex/releases/download/{TAG}/{name}"
     )
     with patch(
-        "bwrap.urlopen", return_value=io.BytesIO(json.dumps(payload).encode())
+        "bwrap.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            ["gh", "api"], 0, json.dumps(payload).encode(), b""
+        ),
     ) as fetch:
         asset = resolve_bwrap_asset(VERSION, target)
 
     assert asset.tag == TAG
     assert asset.architecture == architecture
     assert asset.name == name
-    assert (
-        fetch.call_args.args[0].full_url
-        == f"https://api.github.com/repos/openai/codex/releases/tags/{TAG}"
-    )
+    assert fetch.call_args.args[0][:3] == [
+        "gh",
+        "api",
+        f"repos/openai/codex/releases/tags/{TAG}",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -126,7 +138,10 @@ def test_resolves_exact_release_tag_and_target_architecture(
 )
 def test_rejects_untrusted_release_metadata(metadata: bytes) -> None:
     with (
-        patch("bwrap.urlopen", return_value=io.BytesIO(metadata)),
+        patch(
+            "bwrap.subprocess.run",
+            return_value=subprocess.CompletedProcess(["gh", "api"], 0, metadata, b""),
+        ),
         pytest.raises(LifecycleError),
     ):
         resolve_bwrap_asset(VERSION, "x86_64-unknown-linux-gnu")
@@ -136,7 +151,10 @@ def test_download_rejects_size_and_digest_tampering(tmp_path: Path) -> None:
     archive = _archive_bytes()
     asset = _asset(archive, digest="0" * 64)
     with (
-        patch("bwrap.urlopen", return_value=io.BytesIO(archive)),
+        patch(
+            "bwrap.subprocess.run",
+            return_value=subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+        ),
         pytest.raises(LifecycleError, match="size/digest"),
     ):
         fetch_bwrap_binary(asset, cache_root=tmp_path)
@@ -153,7 +171,10 @@ def test_download_rejects_size_and_digest_tampering(tmp_path: Path) -> None:
         wrong_size.digest,
     )
     with (
-        patch("bwrap.urlopen", return_value=io.BytesIO(archive)),
+        patch(
+            "bwrap.subprocess.run",
+            return_value=subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+        ),
         pytest.raises(LifecycleError, match="size/digest"),
     ):
         fetch_bwrap_binary(wrong_size, cache_root=tmp_path)
@@ -163,10 +184,14 @@ def test_extracts_member_named_after_verified_asset(tmp_path: Path) -> None:
     archive = _archive_bytes()
     asset = _asset(archive)
 
-    with patch("bwrap.urlopen", return_value=io.BytesIO(archive)):
+    with patch(
+        "bwrap.subprocess.run",
+        return_value=subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+    ) as gh:
         binary = fetch_bwrap_binary(asset, cache_root=tmp_path)
 
     assert binary.read_bytes() == b"bwrap\n"
+    assert gh.call_args.args[0][:3] == ["gh", "api", ASSET_API_URL]
 
 
 def test_rejects_legacy_bare_bwrap_member(tmp_path: Path) -> None:
@@ -174,7 +199,10 @@ def test_rejects_legacy_bare_bwrap_member(tmp_path: Path) -> None:
     asset = _asset(archive)
 
     with pytest.raises(LifecycleError, match="普通可执行"):
-        with patch("bwrap.urlopen", return_value=io.BytesIO(archive)):
+        with patch(
+            "bwrap.subprocess.run",
+            return_value=subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+        ):
             fetch_bwrap_binary(asset, cache_root=tmp_path)
 
 
@@ -192,7 +220,10 @@ def test_safe_extraction_rejects_dangerous_or_nonunique_archives(
     archive = _archive_bytes(**kwargs)
     asset = _asset(archive)
     with pytest.raises(LifecycleError, match=error):
-        with patch("bwrap.urlopen", return_value=io.BytesIO(archive)):
+        with patch(
+            "bwrap.subprocess.run",
+            return_value=subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+        ):
             fetch_bwrap_binary(asset, cache_root=tmp_path)
 
 
@@ -200,9 +231,15 @@ def test_cache_is_version_and_digest_isolated(tmp_path: Path) -> None:
     archive = _archive_bytes()
     first = _asset(archive)
     second = _asset(archive, tag="rust-v0.155.2")
-    with patch("bwrap.urlopen", return_value=io.BytesIO(archive)):
+    with patch(
+        "bwrap.subprocess.run",
+        return_value=subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+    ):
         first_path = fetch_bwrap_binary(first, cache_root=tmp_path)
-    with patch("bwrap.urlopen", return_value=io.BytesIO(archive)):
+    with patch(
+        "bwrap.subprocess.run",
+        return_value=subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+    ):
         second_path = fetch_bwrap_binary(second, cache_root=tmp_path)
     assert first_path != second_path
     assert first_path.is_file() and second_path.is_file()
@@ -213,7 +250,10 @@ def test_tampered_cached_binary_is_restored_from_verified_archive(
 ) -> None:
     archive = _archive_bytes()
     asset = _asset(archive)
-    with patch("bwrap.urlopen", return_value=io.BytesIO(archive)):
+    with patch(
+        "bwrap.subprocess.run",
+        return_value=subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+    ):
         binary = fetch_bwrap_binary(asset, cache_root=tmp_path)
     binary.write_bytes(b"tampered")
     binary.chmod(0o755)
@@ -222,6 +262,75 @@ def test_tampered_cached_binary_is_restored_from_verified_archive(
 
     assert restored == binary
     assert restored.read_bytes() == b"bwrap\n"
+
+
+def test_cache_hit_uses_authenticated_metadata_without_asset_download(
+    tmp_path: Path,
+) -> None:
+    archive = _archive_bytes()
+    metadata = _metadata(digest=sha256_bytes(archive), size=len(archive))
+    responses = [
+        subprocess.CompletedProcess(["gh", "api"], 0, metadata, b""),
+        subprocess.CompletedProcess(["gh", "api"], 0, archive, b""),
+    ]
+    with patch("bwrap.subprocess.run", side_effect=responses) as gh:
+        first = resolve_bwrap_binary(
+            VERSION, "x86_64-unknown-linux-gnu", cache_root=tmp_path
+        )
+
+    with patch(
+        "bwrap.subprocess.run",
+        return_value=subprocess.CompletedProcess(["gh", "api"], 0, metadata, b""),
+    ) as gh:
+        cached = resolve_bwrap_binary(
+            VERSION, "x86_64-unknown-linux-gnu", cache_root=tmp_path
+        )
+
+    assert cached == first
+    assert gh.call_count == 1
+    assert gh.call_args.args[0][:3] == [
+        "gh",
+        "api",
+        f"repos/openai/codex/releases/tags/{TAG}",
+    ]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        subprocess.CompletedProcess(["gh", "api"], 1, b"", b"token=secret"),
+        FileNotFoundError(),
+    ],
+)
+def test_gh_metadata_failure_fails_closed(result: object) -> None:
+    patcher = (
+        patch("bwrap.subprocess.run", side_effect=result)
+        if isinstance(result, BaseException)
+        else patch("bwrap.subprocess.run", return_value=result)
+    )
+    with patcher, pytest.raises(LifecycleError, match="gh CLI") as error:
+        resolve_bwrap_asset(VERSION, "x86_64-unknown-linux-gnu")
+    assert "secret" not in str(error.value)
+
+
+def test_gh_metadata_binary_payload_must_be_valid_json() -> None:
+    result = subprocess.CompletedProcess(["gh", "api"], 0, b"not-json", b"")
+    with (
+        patch("bwrap.subprocess.run", return_value=result),
+        pytest.raises(LifecycleError, match="有效 JSON"),
+    ):
+        resolve_bwrap_asset(VERSION, "x86_64-unknown-linux-gnu")
+
+
+def test_gh_asset_failure_fails_closed(tmp_path: Path) -> None:
+    asset = _asset(_archive_bytes())
+    result = subprocess.CompletedProcess(["gh", "api"], 1, b"", b"token=secret")
+    with (
+        patch("bwrap.subprocess.run", return_value=result),
+        pytest.raises(LifecycleError, match="gh CLI") as error,
+    ):
+        fetch_bwrap_binary(asset, cache_root=tmp_path)
+    assert "secret" not in str(error.value)
 
 
 def test_cargo_receives_bwrap_digest_pin_for_prebuilt_binary(tmp_path: Path) -> None:
