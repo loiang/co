@@ -49,7 +49,6 @@ class ReleaseBundle:
 
     tag: str
     source_rev: str
-    upstream_rev: str
     source_version: str
     platform: str
     cli: Artifact
@@ -74,7 +73,6 @@ class ReleaseBundle:
             "repository": REPOSITORY,
             "releaseTag": self.tag,
             "sourceRev": self.source_rev,
-            "upstreamRev": self.upstream_rev,
             "sourceVersion": self.source_version,
             "platform": self.platform,
             "package": self.package,
@@ -203,7 +201,7 @@ def _manifest_identity(
     source_rev: str,
     archive_name: str,
     platform: str = PLATFORM,
-) -> tuple[str, str, str]:
+) -> tuple[str, str]:
     checksums = payload.get("checksums")
     metadata = package_metadata(payload)
     entrypoint = metadata["entrypoint"]
@@ -213,7 +211,6 @@ def _manifest_identity(
         and payload.get("repository") == REPOSITORY
         and payload.get("sourceRev") == source_rev
         and payload.get("platform") == platform
-        and SHA_RE.fullmatch(str(payload.get("upstreamRev", ""))) is not None
         and isinstance(payload.get("sourceVersion"), str)
         and bool(payload.get("sourceVersion"))
         and isinstance(checksums, dict)
@@ -223,7 +220,6 @@ def _manifest_identity(
     if not valid:
         raise LifecycleError("release manifest identity 或 checksum schema 不一致")
     return (
-        str(payload["upstreamRev"]),
         str(payload["sourceVersion"]),
         str(checksums[entrypoint]),
     )
@@ -256,9 +252,7 @@ def fetch_release_bundle(root: Path, tag: str, source_rev: str) -> ReleaseBundle
     if manifest.sha256 != expected[manifest_name]:
         raise LifecycleError("release manifest SHA-256 与 SHA256SUMS 不一致")
     payload = _load_manifest(manifest.path)
-    upstream_rev, version, binary_sha = _manifest_identity(
-        payload, source_rev, archive_name
-    )
+    version, binary_sha = _manifest_identity(payload, source_rev, archive_name)
     cli = _prefetch(root, tag, archive_name)
     archive_sha = str(payload["checksums"][archive_name])
     if cli.sha256 != expected[archive_name] or cli.sha256 != archive_sha:
@@ -269,7 +263,6 @@ def fetch_release_bundle(root: Path, tag: str, source_rev: str) -> ReleaseBundle
     return ReleaseBundle(
         tag,
         source_rev,
-        upstream_rev,
         version,
         PLATFORM,
         cli,

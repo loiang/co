@@ -8,6 +8,12 @@
 - **冲突保留**：`.github/actions/setup-ci/action.yml` 吸收上游其余 CI 变化但继续不安装 Just，因为 native `co` lifecycle 已替代 Just 入口。`codex-rs/core/BUILD.bazel` 保留 `//:AGENTS.md` 为 remote Bazel test data。`codex-rs/tui/src/app/tests.rs` 同时注册本地 `archive_except_lifecycle_tests` 与上游 `mcp_login_tests`、`security_setup_tests`，并删除上游已移除的 `daybreak_tests` 注册及文件。上游删除的根 `AGENTS.md` 与 `.codex/environments/environment.toml`、仓库本地 `.codex/skills/` 保持为 fork 治理契约。
 - **回读保护点**：archive-except 的生命周期测试注册在 `codex-rs/tui/src/app/tests.rs`，实现测试在 `codex-rs/tui/src/app/tests/archive_except_lifecycle_tests.rs`；TUI 执行防护位于 `codex-rs/tui/src/chatwidget/archive_except.rs`，而 `codex-rs/tui/src/chatwidget.rs` 必须继续声明该 module。其余 native lifecycle、`--locked`、vendored TLS、V8 cache、`bwrap`、`co sync` 和 installed backend 保护路径继续按本 ledger 的对应条目回读。
 
+## 当前源码身份与升级 target
+
+- 当前构建身份唯一来自当前 checkout 的 Git `HEAD`（`sourceRev`）；build、evidence、release manifest 和 install 不再生成或消费 `upstreamRev`。
+- `.co/upstream-rev` 曾用于记录独立 upstream baseline，已删除。升级仍按显式 `revision` 解析并合入 fetched `upstream/main`；当 target 已经是当前 checkout `HEAD` 的 ancestor 时返回 no-op，否则创建 candidate worktree，并始终以 candidate 自身 `HEAD` 执行 build。
+- `upgrade-finalize --revision` 只传递实际 merge target，继续用于冲突 worktree 的恢复；它不再写入独立 baseline marker。
+
 ## 2026-09-28 — upstream `44fe510ce3ee61c8ef623adcbf89b901c73ddd61` 合并保留记录
 
 - **基线推进**：从共同祖先 `5c5308fc9a9ee789049d646ef11e5400384b9c6f` 合并官方 `upstream/main`；本节只记录已在该次集成中回读的真实 upstream OID，不把集成结果伪记为历史自定义 commit。
@@ -18,7 +24,7 @@
 
 - **Commit**：`001e804c0bc429b9a9a5d5dec046a797ee3cb1c8`
 - **用户可见行为**：建立从本地自定义源码构建 CLI 的完整生命周期。`co` 负责固定 upstream/source identity，执行 candidate upgrade、测试、静态 CLI build、host integration、publish 和 install，并输出可复核的状态记录；构建产物只包含 CLI 与运行时 helper。该提交还引入了本地 `archive-except` 能力的初始状态规划，以及 host skills 启动时清理 `CODEX_HOME/skills/.system` 的行为，使 bundled system skills 不会被加载。
-- **保护 / 测试路径**：源码与 lock identity 由 `scripts/co/evidence.py`、`scripts/co/git_lifecycle.py` 和 `.co/upstream-rev` 绑定；静态构建与生命周期回归位于 `test/co/`。archive 图规划在 `codex-rs/state/src/runtime/archive_except.rs`，skills 清理在 `codex-rs/skills/src/lib.rs` 与 `codex-rs/ext/skills/src/host_service.rs`；对应测试为 `codex-rs/state/src/runtime/archive_except_tests.rs`、`codex-rs/ext/skills/src/host_service_tests.rs` 的 `bundled_skills_are_removed_and_never_loaded`。
+- **保护 / 测试路径**：源码与 lock identity 由 `scripts/co/evidence.py`、`scripts/co/git_lifecycle.py` 的当前 `HEAD` 与 `sourceRev` 绑定；静态构建与生命周期回归位于 `test/co/`。archive 图规划在 `codex-rs/state/src/runtime/archive_except.rs`，skills 清理在 `codex-rs/skills/src/lib.rs` 与 `codex-rs/ext/skills/src/host_service.rs`；对应测试为 `codex-rs/state/src/runtime/archive_except_tests.rs`、`codex-rs/ext/skills/src/host_service_tests.rs` 的 `bundled_skills_are_removed_and_never_loaded`。
 
 ## 079ffd907f — 将自定义构建同步到官方稳定 release
 
@@ -82,4 +88,4 @@
 
 - `5ca875c147ceb058d66f6c9b32367a5231d301c7` 是把官方 upstream 合入升级分支的 merge commit，不产生独立自定义行为。
 - `78245b47af2a7aafcabe025828ceecca69db4df1` 属于 `upstream/main` 的官方功能，不记录为本地 patch。
-- `b6f16cb9e771f68f5bf98d0a6e57aece73d16d16` 只更新 `.co/upstream-rev` 与 Cargo git hash 以推进 upstream baseline，不记录为自定义功能。
+- `b6f16cb9e771f68f5bf98d0a6e57aece73d16d16` 只更新 `.co/upstream-rev` 与 Cargo git hash 以推进 upstream baseline；`.co/upstream-rev` 现已删除，该 commit 仅保留为历史行为，不记录为当前自定义功能。

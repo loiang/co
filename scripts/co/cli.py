@@ -41,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
 
     finalize = subcommands.add_parser("upgrade-finalize")
     finalize.add_argument("--repo", type=Path, required=True)
-    finalize.add_argument("--upstream-rev", required=True)
+    finalize.add_argument("--revision", required=True)
     finalize.add_argument("--ni-repo", type=Path, default=Path("/repo/ni"))
     finalize.add_argument("--cores", type=_non_negative_int, default=0)
 
@@ -80,9 +80,7 @@ def _execute(args: argparse.Namespace) -> str:
         return f"candidate {status}: {candidate.branch} ({candidate.root})"
     if args.command == "upgrade-finalize":
         branch = subprocess_branch(args.repo)
-        candidate = Candidate(
-            args.repo.resolve(), branch, args.upstream_rev, changed=True
-        )
+        candidate = Candidate(args.repo.resolve(), branch, args.revision, changed=True)
         finalize_candidate(candidate)
         validate_candidate(candidate, args.ni_repo, args.cores)
         return f"candidate finalized: {branch} ({candidate.root})"

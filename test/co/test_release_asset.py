@@ -26,7 +26,6 @@ from release_asset import (  # noqa: E402
 )
 
 SOURCE_REV = "8aaeb5e955881902ff624e1b049c4199afea079a"
-UPSTREAM_REV = "c4017a87aacc7558002b7cb510025e967c1d765e"
 TAG = "co-20260912T154829Z-8aaeb5e955"
 CLI_NAME = "co-cli-x86_64-linux-8aaeb5e955.tar.gz"
 MANIFEST_NAME = "co-manifest-8aaeb5e955.json"
@@ -58,7 +57,7 @@ def _artifact(path: Path) -> Artifact:
 def _release_files(
     root: Path, *, manifest_source: str = SOURCE_REV, archive_sum: str | None = None
 ) -> dict[str, Artifact]:
-    archive, manifest, sums = make_assets(root, manifest_source, UPSTREAM_REV)
+    archive, manifest, sums = make_assets(root, manifest_source)
     if manifest_source != SOURCE_REV:
         archive.rename(root / CLI_NAME)
         manifest.rename(root / MANIFEST_NAME)
@@ -90,6 +89,7 @@ def test_fetch_cross_checks_release_evidence(tmp_path: Path) -> None:
     bundle = _fetch(tmp_path, _release_files(tmp_path))
 
     assert bundle.source_rev == SOURCE_REV
+    assert "upstreamRev" not in bundle.evidence()
     assert bundle.cli.sha256 == bundle.evidence()["cli"]["sha256"]
     assert bundle.binary_sha256 == sha256_bytes(BINARY)
     assert bundle.binary_size == len(BINARY)

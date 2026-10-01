@@ -15,7 +15,7 @@ pub(crate) fn command() -> Command {
         )
         .subcommand(
             Command::new("upgrade-finalize")
-                .arg(Arg::new("upstream-rev").long("upstream-rev").required(true))
+                .arg(Arg::new("revision").long("revision").required(true))
                 .arg(ni_repo())
                 .arg(cores()),
         )

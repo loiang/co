@@ -37,7 +37,7 @@ def make_package(root: Path) -> Path:
     return package
 
 
-def make_assets(root: Path, source: str, upstream: str) -> tuple[Path, ...]:
+def make_assets(root: Path, source: str) -> tuple[Path, ...]:
     """Emit a real v2 manifest and matching complete package archive."""
     package = make_package(root)
     archive = root / f"co-cli-x86_64-linux-{source[:10]}.tar.gz"
@@ -51,7 +51,6 @@ def make_assets(root: Path, source: str, upstream: str) -> tuple[Path, ...]:
             "schemaVersion": 2,
             "repository": "loiang/co",
             "sourceRev": source,
-            "upstreamRev": upstream,
             "sourceVersion": VERSION,
             "platform": "x86_64-linux",
             "package": METADATA,

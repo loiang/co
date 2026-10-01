@@ -28,7 +28,6 @@ def test_matching_dirty_build_record_is_valid_for_local_host_gate(
     identity = {
         "schemaVersion": 2,
         "sourceRev": "a" * 40,
-        "upstreamRev": "b" * 40,
         "flakeLockSha256": "c" * 64,
         "dirty": True,
     }
@@ -41,15 +40,13 @@ def test_matching_dirty_build_record_is_valid_for_local_host_gate(
 
 def _records(tmp_path: Path) -> tuple[Path, dict]:
     root, _, _ = _repository(tmp_path)
-    (root / ".co").mkdir()
-    (root / ".co/upstream-rev").write_text("b" * 40)
     (root / "flake.lock").write_text("{}")
-    _git(root, "add", ".co/upstream-rev", "flake.lock")
+    _git(root, "add", "flake.lock")
     _git(root, "commit", "-m", "identity")
     identity = source_identity(root)
     build = root / ".states/co/build/native"
     build.mkdir(parents=True)
-    assets = make_assets(build, identity["sourceRev"], identity["upstreamRev"])
+    assets = make_assets(build, identity["sourceRev"])
     record = {
         "schemaVersion": 2,
         **identity,

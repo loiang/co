@@ -16,7 +16,7 @@ def test_building_commands_default_to_all_cores(command: str) -> None:
     """Keep all available cores as the public default."""
     arguments = [command, "--repo", str(ROOT)]
     if command == "upgrade-finalize":
-        arguments.extend(("--upstream-rev", "a" * 40))
+        arguments.extend(("--revision", "a" * 40))
 
     assert _parser().parse_args(arguments).cores == 0
 

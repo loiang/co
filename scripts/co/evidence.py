@@ -17,14 +17,9 @@ from release_asset import _load_manifest, _manifest_identity, _parse_checksums
 
 
 def source_identity(root: Path) -> dict[str, Any]:
-    """Return the commit, upstream baseline, lock, and dirtiness identity."""
-    try:
-        upstream_rev = (root / ".co/upstream-rev").read_text(encoding="utf-8").strip()
-    except OSError as error:
-        raise LifecycleError("缺少 .co/upstream-rev") from error
+    """Return the current HEAD, lock, and dirtiness identity."""
     return {
         "sourceRev": head(root),
-        "upstreamRev": upstream_rev,
         "flakeLockSha256": sha256(root / "flake.lock"),
         "dirty": working_dirty(root),
     }
@@ -33,7 +28,7 @@ def source_identity(root: Path) -> dict[str, Any]:
 def read_build_record(root: Path, identity: dict[str, Any]) -> dict[str, Any]:
     """Require a build record bound to the current source, lock, and dirtiness."""
     record = _read_build_record(root)
-    for field in ("sourceRev", "upstreamRev", "flakeLockSha256", "dirty"):
+    for field in ("sourceRev", "flakeLockSha256", "dirty"):
         if record.get(field) != identity[field]:
             raise LifecycleError(
                 f".states/co/build/latest.json 与当前源码不一致: {field}"
@@ -53,7 +48,7 @@ def _require_record_identity(
     root: Path, relative: str, identity: dict[str, Any]
 ) -> dict[str, Any]:
     record = read_json(root / relative)
-    for field in ("sourceRev", "upstreamRev", "flakeLockSha256", "dirty"):
+    for field in ("sourceRev", "flakeLockSha256", "dirty"):
         if record.get(field) != identity[field]:
             raise LifecycleError(f"{relative} 与当前源码不一致: {field}")
     return record
@@ -90,7 +85,7 @@ def _verify_manifest(
     if len(manifests) != 1 or sha256(manifests[0]) != record.get("manifestSha256"):
         raise LifecycleError("build manifest identity 或 checksum 不一致")
     manifest = _load_manifest(manifests[0])
-    for field in ("sourceRev", "upstreamRev"):
+    for field in ("sourceRev",):
         if manifest.get(field) != identity[field]:
             raise LifecycleError(f"build manifest 与当前源码不一致: {field}")
     metadata = package_metadata(manifest)
@@ -103,7 +98,7 @@ def _verify_manifest(
         f"co-manifest-{identity['sourceRev'][:10]}.json"
     ):
         raise LifecycleError("build assets 文件名与 source/platform 不一致")
-    _, _, binary_sha = _manifest_identity(
+    _, binary_sha = _manifest_identity(
         manifest, identity["sourceRev"], archives[0].name, manifest["platform"]
     )
     if manifest["checksums"][archives[0].name] != sha256(archives[0]):

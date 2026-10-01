@@ -91,7 +91,6 @@ def _emit_assets(
     manifest = {
         "schemaVersion": 2,
         "repository": "loiang/co",
-        "upstreamRev": identity["upstreamRev"],
         "sourceRev": identity["sourceRev"],
         "sourceVersion": version,
         "platform": package.platform,

@@ -23,7 +23,6 @@ from common import (
     timestamp,
 )
 
-UPSTREAM_FILE = Path(".co/upstream-rev")
 SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
 
 
@@ -34,13 +33,13 @@ class Candidate:
     Attributes:
         root: Candidate worktree path.
         branch: Candidate branch name.
-        upstream_rev: Full fetched upstream commit ID.
+        revision: Full fetched upstream commit ID to merge.
         changed: Whether a new candidate was created.
     """
 
     root: Path
     branch: str
-    upstream_rev: str
+    revision: str
     changed: bool
 
 
@@ -53,19 +52,6 @@ def _succeeds(root: Path, *args: str) -> bool:
         stderr=subprocess.DEVNULL,
     )
     return result.returncode == 0
-
-
-def _recorded_upstream(root: Path) -> str:
-    path = root / UPSTREAM_FILE
-    try:
-        value = path.read_text(encoding="utf-8").strip()
-    except OSError as error:
-        raise LifecycleError(f"缺少 tracked upstream baseline: {path}") from error
-    if not SHA_RE.fullmatch(value):
-        raise LifecycleError(f"upstream baseline 不是完整 Git SHA: {value}")
-    if not _succeeds(root, "cat-file", "-e", f"{value}^{{commit}}"):
-        raise LifecycleError(f"upstream baseline object 不存在: {value}")
-    return value
 
 
 def _resolve_target(root: Path, revision: str) -> str:
@@ -106,7 +92,8 @@ def create_upgrade_candidate(
         build_cores: Cores exposed to the candidate Nix build; zero means all.
 
     Returns:
-        Candidate identity; ``changed`` is false for the same upstream SHA.
+        Candidate identity; ``changed`` is false when the target is already
+        an ancestor of the current checkout HEAD.
 
     Raises:
         CandidateConflict: Git leaves a conflicted merge for manual recovery.
@@ -122,13 +109,8 @@ def create_upgrade_candidate(
             f"upgrade 只能从 main 或初始化 custom/* 启动: {source_branch}"
         )
     source_head = head(root)
-    baseline = _recorded_upstream(root)
     target = _resolve_target(root, revision)
-    if not _succeeds(root, "merge-base", "--is-ancestor", baseline, source_head):
-        raise LifecycleError("tracked upstream baseline 不是当前 candidate 的 ancestor")
-    if not _succeeds(root, "merge-base", "--is-ancestor", baseline, target):
-        raise LifecycleError("目标 upstream revision 早于 tracked baseline，拒绝降级")
-    if target == baseline:
+    if _succeeds(root, "merge-base", "--is-ancestor", target, source_head):
         return Candidate(root, source_branch, target, changed=False)
 
     branch, worktree = _candidate_identity(root, target, created_at or timestamp())
@@ -138,7 +120,7 @@ def create_upgrade_candidate(
 
 
 def finalize_candidate(candidate: Candidate) -> None:
-    """Pin the new baseline, refresh flake inputs, and commit only those locks.
+    """Refresh flake inputs and commit only the resulting dependency locks.
 
     Args:
         candidate: Successfully merged candidate to finalize.
@@ -146,7 +128,6 @@ def finalize_candidate(candidate: Candidate) -> None:
     root = require_repo(candidate.root)
     if _succeeds(root, "rev-parse", "--verify", "MERGE_HEAD"):
         raise LifecycleError("merge 尚未完成；先解决冲突并执行 merge --continue")
-    (root / UPSTREAM_FILE).write_text(candidate.upstream_rev + "\n", encoding="utf-8")
     try:
         run(["nix", "flake", "lock"], cwd=root, capture=False)
         run(
@@ -182,14 +163,14 @@ def finalize_candidate(candidate: Candidate) -> None:
         raise LifecycleError(
             f"dependency lock 更新或验真失败；candidate 保留于 {root}: {error}"
         ) from error
-    git(root, "add", str(UPSTREAM_FILE), "flake.lock", "nix/cargo-git-hashes.nix")
+    git(root, "add", "flake.lock", "nix/cargo-git-hashes.nix")
     if _succeeds(root, "diff", "--cached", "--quiet"):
-        raise LifecycleError("upstream 变化未产生 baseline/lock staged diff")
+        raise LifecycleError("upstream 变化未产生 dependency lock staged diff")
     git(
         root,
         "commit",
         "-m",
-        f"build(co): advance upstream to {candidate.upstream_rev[:10]}",
+        "build(co): refresh dependency locks after upstream merge",
     )
 
 
@@ -201,7 +182,7 @@ def validate_candidate(
     """Run the candidate checkout's lifecycle CLI without registry lookup.
 
     Args:
-        candidate: Candidate whose tracked baseline update is committed.
+        candidate: Candidate whose dependency locks are ready to commit.
         ni_repository: Consumer checkout that owns the official host package.
         build_cores: Cores exposed to the candidate Nix build; zero means all.
     """

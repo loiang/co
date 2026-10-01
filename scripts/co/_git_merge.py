@@ -39,7 +39,7 @@ def _merge_upstream(
             str(candidate.root),
             "merge",
             "--no-edit",
-            candidate.upstream_rev,
+            candidate.revision,
         ],
         cwd=candidate.root,
         check=False,
@@ -62,12 +62,12 @@ def _merge_upstream(
             f"请查看 Git 诊断；worktree 已保留: {candidate.root}"
         )
     quoted_worktree = shlex.quote(str(candidate.root))
-    quoted_target = shlex.quote(candidate.upstream_rev)
+    quoted_target = shlex.quote(candidate.revision)
     candidate_cli = shlex.quote(str(candidate.root / "scripts/co/cli.py"))
     command = (
         f"GIT_EDITOR=true git -C {quoted_worktree} merge --continue\n"
         f"python3 {candidate_cli} upgrade-finalize --repo {quoted_worktree} "
-        f"--upstream-rev {quoted_target} "
+        f"--revision {quoted_target} "
         f"--ni-repo {shlex.quote(str(ni_repository.resolve()))} "
         f"--cores {build_cores}"
     )

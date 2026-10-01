@@ -46,8 +46,6 @@ def source_repo(tmp_path: Path) -> Path:
     (tmp_path / "codex-rs/Cargo.toml").write_text(
         '[workspace.package]\nversion = "0.0.0"\n', encoding="utf-8"
     )
-    (tmp_path / ".co").mkdir()
-    (tmp_path / ".co/upstream-rev").write_text("a" * 40, encoding="utf-8")
     (tmp_path / "flake.lock").write_text("{}", encoding="utf-8")
     (tmp_path / ".gitignore").write_text(".states/\n", encoding="utf-8")
     git(tmp_path, "init", "--quiet")
@@ -247,6 +245,7 @@ def test_build_uses_official_package_and_emits_bound_assets(
     }
     manifest = json.loads(manifest_path.read_text())
     assert manifest["schemaVersion"] == 2
+    assert "upstreamRev" not in manifest
     assert manifest["package"] == metadata
     assert manifest["checksums"] == {
         "bin/codex": sha256(package_dir / "bin/codex"),

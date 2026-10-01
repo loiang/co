@@ -273,7 +273,7 @@ def test_native_host_gate_receives_complete_package_without_static_elf_gate(
     from release_asset import Artifact, fetch_release_bundle
 
     source = "a" * 40
-    assets = make_assets(tmp_path, source, "b" * 40)
+    assets = make_assets(tmp_path, source)
     files = {
         path.name: Artifact(
             path.name,

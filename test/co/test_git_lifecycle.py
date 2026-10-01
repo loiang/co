@@ -67,7 +67,6 @@ def _repositories(
     _git(checkout, "remote", "rename", "origin", "upstream")
     _git(checkout, "config", "user.name", "Co Test")
     _git(checkout, "config", "user.email", "co-test@example.invalid")
-    _write(checkout, ".co/upstream-rev", baseline + "\n")
     _write(checkout, "custom.txt", "custom\n")
     _commit(checkout, "customization")
     return upstream, checkout, baseline
@@ -140,14 +139,14 @@ def test_rejects_upstream_codex_toml_change_and_preserves_ours_for_recovery(
     assert ours == local_codex_toml
 
 
-def test_same_upstream_sha_is_a_noop(tmp_path: Path) -> None:
+def test_target_already_in_head_is_a_noop(tmp_path: Path) -> None:
     _, checkout, baseline = _repositories(tmp_path)
 
     candidate = create_upgrade_candidate(checkout, created_at="20260912T130001Z")
 
     assert candidate.changed is False
     assert candidate.root == checkout.resolve()
-    assert candidate.upstream_rev == baseline
+    assert candidate.revision == baseline
     assert not (checkout / ".states" / "worktrees").exists()
 
 
@@ -158,7 +157,7 @@ def test_conflict_preserves_candidate_worktree_for_continuation(
     _write(checkout, "shared.txt", "custom edit\n")
     _commit(checkout, "custom conflict")
     _write(upstream, "shared.txt", "upstream edit\n")
-    _commit(upstream, "upstream conflict")
+    target = _commit(upstream, "upstream conflict")
 
     with pytest.raises(CandidateConflict, match="merge --continue") as captured:
         create_upgrade_candidate(checkout, created_at="20260912T130002Z", build_cores=4)
@@ -171,6 +170,7 @@ def test_conflict_preserves_candidate_worktree_for_continuation(
     assert str(matching[0]) in message
     assert "python3" in message
     assert "scripts/co/cli.py upgrade-finalize" in message
+    assert f"--revision {target}" in message
     assert "--cores 4" in message
     assert "CONFLICT" in capfd.readouterr().out
     assert _git(matching[0], "rev-parse", "--verify", "MERGE_HEAD")
