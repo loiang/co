@@ -1,0 +1,19 @@
+### Why
+
+将本地 fork 与 `openai/codex` 的 `444da310e108da16aaeb18fd790b0ac464f08aca`
+同步，同时保留仓库治理、archive-except 生命周期覆盖和可追溯的 upstream
+baseline。
+
+### Goal
+
+在 integration 分支完成上游合入；官方 latest release 元数据必须通过已认证的
+GitHub CLI 查询，避免匿名 REST 配额导致 `co build` 失败。
+
+### Accomplished
+
+- 解决 setup-ci、core Bazel test data 与 TUI test registry 冲突，保留本地
+  archive-except 与治理语义，并采用上游 MCP login tests。
+- 将 `.co/upstream-rev` 更新为本次上游 OID，未纳入 marker/schema 删除迁移。
+- `scripts/co/build.py` 改用 `gh api repos/openai/codex/releases/latest`；未传递或
+  记录凭据，新增缺少 CLI、认证失败、限流和元数据解析测试。
+- 已运行格式化、`co test`（151 passed, 2 skipped）和认证路径 `co build`。
