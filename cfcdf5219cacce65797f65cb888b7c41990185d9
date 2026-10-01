@@ -1,0 +1,4 @@
+Overall:
+- Why: bwrap release metadata and archives were fetched through urllib, allowing anonymous GitHub API/network access and bypassing the repository's authenticated gh boundary.
+- Goal: route both metadata and binary retrieval through gh api while preserving stable-release, asset identity, size, digest, safe extraction, cache, and atomic replacement guarantees.
+- Accomplished: validated GitHub API asset URLs, rejected missing/nonzero/malformed gh responses without exposing stderr or tokens, and converted bwrap regressions to subprocess-boundary tests including authenticated cache-hit behavior.
