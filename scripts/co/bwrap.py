@@ -10,10 +10,10 @@ from pathlib import Path
 
 from common import LifecycleError, sha256
 from package_verification import extract_single_executable
+from upstream_version import version_key
 
 RELEASE_API = "repos/openai/codex/releases/tags"
 _BROWSER_DOWNLOAD_PREFIX = "https://github.com/openai/codex/releases/download/"
-_TAG_PATTERN = re.compile(r"rust-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 _DIGEST_PATTERN = re.compile(r"^sha256:([0-9a-f]{64})$")
 _ASSET_URL_PATTERN = re.compile(
     r"https://api\.github\.com/repos/openai/codex/releases/assets/[1-9][0-9]*"
@@ -49,8 +49,12 @@ def resolve_bwrap_asset(version: str, target: str) -> BwrapAsset:
     metadata = _fetch_release_metadata(tag)
     if metadata.get("tag_name") != tag:
         raise LifecycleError("bwrap release API 返回了错误的 tag")
-    if metadata.get("draft") is not False or metadata.get("prerelease") is not False:
-        raise LifecycleError("bwrap release 必须是 stable release")
+    expected_prerelease = "-" in version.split("+", 1)[0]
+    if (
+        metadata.get("draft") is not False
+        or metadata.get("prerelease") is not expected_prerelease
+    ):
+        raise LifecycleError("bwrap release draft/prerelease 与精确版本不一致")
     assets = metadata.get("assets")
     if not isinstance(assets, list):
         raise LifecycleError("bwrap release 缺少 assets 列表")
@@ -117,7 +121,7 @@ def _target_architecture(target: str) -> str:
 
 def _release_tag(version: str) -> str:
     tag = f"rust-v{version}"
-    if _TAG_PATTERN.fullmatch(tag) is None:
+    if version_key(version) is None:
         raise LifecycleError(f"官方 Codex version 无效: {version}")
     return tag
 

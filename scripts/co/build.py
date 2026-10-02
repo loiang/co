@@ -1,9 +1,6 @@
 """Build the upstream native package and emit source-bound release assets."""
 
-import json
-import re
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -18,65 +15,7 @@ from common import (
 from evidence import source_identity
 from build_worktree import build_lock, build_worktree
 from native_package import NativePackage, PackageRequest, build_package
-
-_OFFICIAL_RELEASE_API = "repos/openai/codex/releases/latest"
-_MAX_RELEASE_METADATA_BYTES = 1024 * 1024
-_STABLE_RELEASE_TAG = re.compile(
-    r"rust-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-)
-
-
-def _official_version() -> str:
-    """Resolve the stable upstream version once for a reproducible build input."""
-    try:
-        result = subprocess.run(
-            [
-                "gh",
-                "api",
-                _OFFICIAL_RELEASE_API,
-                "--header",
-                "Accept: application/vnd.github+json",
-                "--header",
-                "X-GitHub-Api-Version: 2022-11-28",
-            ],
-            check=False,
-            capture_output=True,
-        )
-    except FileNotFoundError as error:
-        raise LifecycleError("gh CLI 不可用；请安装 GitHub CLI") from error
-    if result.returncode:
-        stderr = (result.stderr or b"").decode(errors="replace").lower()
-        if any(
-            marker in stderr
-            for marker in (
-                "not logged into",
-                "authentication",
-                "bad credentials",
-                "requires authentication",
-                "401",
-            )
-        ):
-            raise LifecycleError("gh CLI 未认证或认证已失效；请先完成 gh auth login")
-        raise LifecycleError(
-            f"gh api 查询官方 latest stable release 失败 (exit {result.returncode})"
-        )
-    raw_metadata = result.stdout or b""
-    if len(raw_metadata) > _MAX_RELEASE_METADATA_BYTES:
-        raise LifecycleError("官方 latest stable release metadata 超过 1 MiB")
-    try:
-        metadata = json.loads(raw_metadata)
-    except (json.JSONDecodeError, UnicodeError) as error:
-        raise LifecycleError(
-            "官方 latest stable release metadata 不是有效 JSON"
-        ) from error
-    if not isinstance(metadata, dict):
-        raise LifecycleError("官方 latest stable release metadata 不是 JSON object")
-    tag = metadata.get("tag_name")
-    if metadata.get("draft") is not False or metadata.get("prerelease") is not False:
-        raise LifecycleError("官方 latest stable release 不是稳定 release")
-    if not isinstance(tag, str) or _STABLE_RELEASE_TAG.fullmatch(tag) is None:
-        raise LifecycleError("官方 latest stable release tag 不是 rust-v<semver>")
-    return tag.removeprefix("rust-v")
+from upstream_version import official_version as _official_version
 
 
 def _emit_assets(

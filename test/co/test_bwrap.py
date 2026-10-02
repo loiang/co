@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tarfile
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -145,6 +146,33 @@ def test_rejects_untrusted_release_metadata(metadata: bytes) -> None:
         pytest.raises(LifecycleError),
     ):
         resolve_bwrap_asset(VERSION, "x86_64-unknown-linux-gnu")
+
+
+@pytest.mark.parametrize("prerelease", [True, False])
+def test_prerelease_bwrap_uses_exact_tag_and_matching_release_flag(
+    prerelease: bool,
+) -> None:
+    version = "0.161.0-alpha.11"
+    tag = f"rust-v{version}"
+    payload = json.loads(_metadata(tag=tag))
+    payload["prerelease"] = prerelease
+    with patch("bwrap._fetch_release_metadata", return_value=payload) as fetch:
+        if prerelease:
+            asset = resolve_bwrap_asset(version, "x86_64-unknown-linux-gnu")
+            assert (asset.version, asset.tag) == (version, tag)
+        else:
+            with pytest.raises(LifecycleError, match="prerelease"):
+                resolve_bwrap_asset(version, "x86_64-unknown-linux-gnu")
+    fetch.assert_called_once_with(tag)
+
+
+def test_missing_exact_prerelease_asset_never_falls_back() -> None:
+    payload = json.loads(_metadata(tag="rust-v0.161.0-alpha.11"))
+    payload.update(prerelease=True, assets=[])
+    with patch("bwrap._fetch_release_metadata", return_value=payload) as fetch:
+        with pytest.raises(LifecycleError, match="唯一提供"):
+            resolve_bwrap_asset("0.161.0-alpha.11", "x86_64-unknown-linux-gnu")
+    fetch.assert_called_once_with("rust-v0.161.0-alpha.11")
 
 
 def test_download_rejects_size_and_digest_tampering(tmp_path: Path) -> None:
@@ -351,6 +379,10 @@ def test_cargo_receives_bwrap_digest_pin_for_prebuilt_binary(tmp_path: Path) -> 
     with (
         patch("codex_package.cargo.cargo_target_dir", return_value=tmp_path / "target"),
         patch("codex_package.cargo.resolve_codex_v8_cargo_env", return_value={}),
+        patch(
+            "codex_package.cargo.versioned_workspace",
+            return_value=nullcontext(tmp_path),
+        ),
         patch("codex_package.cargo.subprocess.run", side_effect=capture),
     ):
         build_source_binaries(

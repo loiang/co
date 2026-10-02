@@ -21,7 +21,7 @@ REAL_SUBPROCESS_RUN = subprocess.run
 
 
 def _gh_run(
-    stdout: bytes = b'{"tag_name":"rust-v0.154.0","draft":false,"prerelease":false}',
+    stdout: bytes = b'[{"ref":"refs/tags/rust-v0.154.0","object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]',
     *,
     returncode: int = 0,
     stderr: bytes = b"",
@@ -56,19 +56,23 @@ def source_repo(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_official_version_resolves_latest_stable_rust_release() -> None:
+def test_official_version_resolves_official_git_tags() -> None:
     metadata = io.BytesIO(
-        b'{"tag_name":"rust-v0.154.0","draft":false,"prerelease":false}'
+        b'[{"ref":"refs/tags/rust-v0.154.0","object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}]'
     )
     with patch(
-        "build.subprocess.run",
+        "upstream_version.subprocess.run",
         return_value=subprocess.CompletedProcess(
             ["gh", "api"], 0, metadata.getvalue(), b""
         ),
     ) as gh_run:
         assert _official_version() == "0.154.0"
     command = gh_run.call_args.args[0]
-    assert command[:3] == ["gh", "api", "repos/openai/codex/releases/latest"]
+    assert command[:3] == [
+        "gh",
+        "api",
+        "repos/openai/codex/git/matching-refs/tags/rust-v",
+    ]
     assert "token" not in " ".join(command).lower()
 
 
@@ -108,13 +112,15 @@ def test_linux_gnu_native_tls_uses_vendored_openssl() -> None:
         b'{"tag_name":"rust-v0.154.0","draft":true,"prerelease":false}',
     ],
 )
-def test_official_version_rejects_invalid_release(metadata: bytes) -> None:
+def test_official_version_rejects_release_metadata_as_tag_input(
+    metadata: bytes,
+) -> None:
     with (
         patch(
-            "build.subprocess.run",
+            "upstream_version.subprocess.run",
             return_value=subprocess.CompletedProcess(["gh", "api"], 0, metadata, b""),
         ),
-        pytest.raises(LifecycleError, match="stable release"),
+        pytest.raises(LifecycleError, match="JSON array"),
     ):
         _official_version()
 
@@ -122,7 +128,7 @@ def test_official_version_rejects_invalid_release(metadata: bytes) -> None:
 def test_official_version_rejects_malformed_json() -> None:
     with (
         patch(
-            "build.subprocess.run",
+            "upstream_version.subprocess.run",
             return_value=subprocess.CompletedProcess(
                 ["gh", "api"], 0, b"not JSON", b""
             ),
@@ -132,20 +138,20 @@ def test_official_version_rejects_malformed_json() -> None:
         _official_version()
 
 
-def test_official_version_rejects_non_object_json() -> None:
+def test_official_version_rejects_empty_tags() -> None:
     with (
         patch(
-            "build.subprocess.run",
+            "upstream_version.subprocess.run",
             return_value=subprocess.CompletedProcess(["gh", "api"], 0, b"[]", b""),
         ),
-        pytest.raises(LifecycleError, match="不是 JSON object"),
+        pytest.raises(LifecycleError, match="没有有效完整"),
     ):
         _official_version()
 
 
 def test_official_version_rejects_missing_gh() -> None:
     with (
-        patch("build.subprocess.run", side_effect=FileNotFoundError),
+        patch("upstream_version.subprocess.run", side_effect=FileNotFoundError),
         pytest.raises(LifecycleError, match="gh CLI 不可用"),
     ):
         _official_version()
@@ -155,13 +161,13 @@ def test_official_version_rejects_missing_gh() -> None:
     ("stderr", "message"),
     [
         (b"not logged into any GitHub hosts", "gh CLI 未认证"),
-        (b"API rate limit exceeded", "gh api 查询官方 latest stable release 失败"),
+        (b"API rate limit exceeded", "gh api 查询官方 tags 失败"),
     ],
 )
 def test_official_version_rejects_gh_failure(stderr: bytes, message: str) -> None:
     with (
         patch(
-            "build.subprocess.run",
+            "upstream_version.subprocess.run",
             return_value=subprocess.CompletedProcess(["gh", "api"], 1, b"", stderr),
         ),
         pytest.raises(LifecycleError, match=message),
@@ -184,9 +190,11 @@ def _run_with_prebuilt(
     return run(command, **kwargs)
 
 
-@pytest.mark.parametrize("cores", [0, 4])
+@pytest.mark.parametrize(
+    ("cores", "version"), [(0, "0.154.0"), (4, "0.161.0-alpha.11")]
+)
 def test_build_uses_official_package_and_emits_bound_assets(
-    source_repo: Path, cores: int
+    source_repo: Path, cores: int, version: str
 ) -> None:
     """Replace only source compilation; execute upstream packaging and validation."""
     binary = source_repo / ".states/prebuilt"
@@ -211,11 +219,20 @@ def test_build_uses_official_package_and_emits_bound_assets(
     with (
         patch("native_package.run", side_effect=capture),
         patch("native_package.resolve_make_bin", return_value=binary),
-        patch("bwrap.resolve_bwrap_binary", return_value=binary),
+        patch("bwrap.resolve_bwrap_binary", return_value=binary) as bwrap,
         patch(
-            "build.subprocess.run",
-            side_effect=_gh_run(),
-        ),
+            "upstream_version.subprocess.run",
+            side_effect=_gh_run(
+                json.dumps(
+                    [
+                        {
+                            "ref": f"refs/tags/rust-v{version}",
+                            "object": {"type": "commit", "sha": "a" * 40},
+                        }
+                    ]
+                ).encode()
+            ),
+        ) as gh,
     ):
         latest = build(source_repo, cores)
 
@@ -228,7 +245,9 @@ def test_build_uses_official_package_and_emits_bound_assets(
     package_dir = source_repo / record["packageDir"]
     metadata = json.loads((package_dir / "codex-package.json").read_text())
     assert record["package"] == metadata
-    assert metadata["version"] == "0.154.0"
+    assert metadata["version"] == version
+    assert sum(call.args[0][:2] == ["gh", "api"] for call in gh.call_args_list) == 1
+    bwrap.assert_called_once_with(version, "x86_64-unknown-linux-gnu")
     assert metadata["variant"] == "codex"
     assert metadata["target"] == "x86_64-unknown-linux-gnu"
     assert metadata["entrypoint"] == "bin/codex"
@@ -245,6 +264,7 @@ def test_build_uses_official_package_and_emits_bound_assets(
     }
     manifest = json.loads(manifest_path.read_text())
     assert manifest["schemaVersion"] == 2
+    assert manifest["sourceVersion"] == version
     assert "upstreamRev" not in manifest
     assert manifest["package"] == metadata
     assert manifest["checksums"] == {
@@ -264,7 +284,7 @@ def test_build_uses_official_package_and_emits_bound_assets(
         "--target",
         metadata["target"],
         "--package-version",
-        "0.154.0",
+        version,
         "--package-dir",
         str(package_dir),
         "--cargo-profile",
