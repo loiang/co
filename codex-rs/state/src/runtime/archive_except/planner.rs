@@ -57,7 +57,7 @@ impl ArchiveExceptGraph {
         ArchiveExceptGroup {
             root_thread_id,
             subtrees: self.archive_subtrees(&target_thread_ids),
-            protection_reasons: self.protection_reasons(component, root_thread_id, loaded),
+            protection_reasons: self.protection_reasons(component, loaded),
             created_at_ms: self.records[&root_thread_id].created_at_ms,
             member_thread_ids,
             target_thread_ids,
@@ -110,7 +110,6 @@ impl ArchiveExceptGraph {
     fn protection_reasons(
         &self,
         component: &HashSet<ThreadId>,
-        root: ThreadId,
         loaded: &HashSet<ThreadId>,
     ) -> Vec<ArchiveExceptProtectionReason> {
         use ArchiveExceptProtectionReason as Reason;
@@ -124,15 +123,6 @@ impl ArchiveExceptGraph {
                 Reason::Pinned,
             ),
             (
-                !component.is_disjoint(&self.edge_not_closed),
-                Reason::EdgeNotClosed,
-            ),
-            (self.is_orphan_subagent(root), Reason::OrphanSubagent),
-            (
-                !component.is_disjoint(&self.missing_parent),
-                Reason::MissingParent,
-            ),
-            (
                 !component.is_disjoint(&self.ambiguous),
                 Reason::AmbiguousRelation,
             ),
@@ -142,16 +132,6 @@ impl ArchiveExceptGraph {
             .into_iter()
             .filter_map(|(applies, reason)| applies.then_some(reason))
             .collect()
-    }
-
-    fn is_orphan_subagent(&self, root: ThreadId) -> bool {
-        !self.parent_by_child.contains_key(&root)
-            && !self.missing_parent.contains(&root)
-            && self.records[&root]
-                .source
-                .to_lowercase()
-                .replace('_', "")
-                .contains("subagent")
     }
 
     fn has_cycle(&self, component: &HashSet<ThreadId>) -> bool {

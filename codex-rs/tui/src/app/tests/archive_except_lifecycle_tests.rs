@@ -1,6 +1,7 @@
 use super::*;
 use crate::app_server_session::ThreadParamsMode;
 use codex_state::ArchiveExceptPlan;
+use codex_state::DirectionalThreadSpawnEdgeStatus;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -88,6 +89,19 @@ async fn archive_except_lifecycle_embedded_and_local_daemon_archive_confirmed_th
         app.app_server_target = target;
         let ids = seed_archive_except_threads(&mut app).await?;
         let runtime = app.state_db.clone().expect("fixture database");
+        runtime
+            .upsert_thread_spawn_edge(ids[1], ids[2], DirectionalThreadSpawnEdgeStatus::Open)
+            .await
+            .map_err(std::io::Error::other)?;
+        let missing_parent = ThreadId::from_u128(1);
+        runtime
+            .upsert_thread_spawn_edge(
+                missing_parent,
+                ids[0],
+                DirectionalThreadSpawnEdgeStatus::Open,
+            )
+            .await
+            .map_err(std::io::Error::other)?;
         let mut session = crate::start_embedded_app_server_for_picker(&app.config).await?;
         let plan = confirm_archive_except_popup(&mut app, &mut session, &mut events).await?;
         assert_eq!(plan.candidate_thread_ids.len(), 2);
@@ -133,6 +147,26 @@ async fn archive_except_lifecycle_embedded_and_local_daemon_archive_confirmed_th
                     .starts_with(app.config.codex_home.join("archived_sessions"))
             );
         }
+        assert_eq!(
+            runtime
+                .list_thread_spawn_children_with_status(
+                    ids[1],
+                    DirectionalThreadSpawnEdgeStatus::Closed
+                )
+                .await
+                .map_err(std::io::Error::other)?,
+            vec![ids[2]]
+        );
+        assert_eq!(
+            runtime
+                .list_thread_spawn_children_with_status(
+                    missing_parent,
+                    DirectionalThreadSpawnEdgeStatus::Open
+                )
+                .await
+                .map_err(std::io::Error::other)?,
+            vec![ids[0]]
+        );
         session.shutdown().await?;
     }
     Ok(())
@@ -173,6 +207,7 @@ async fn archive_except_rejects_remote_sessions_with_clear_error() -> Result<()>
 
 #[derive(Clone, Copy)]
 enum ArchiveFault {
+    ArchiveError,
     IncompleteArchive,
     NextSubtreeBecomesLoaded,
 }
@@ -180,12 +215,24 @@ enum ArchiveFault {
 #[tokio::test]
 async fn archive_except_lifecycle_stops_after_incomplete_archive_or_changed_replan() -> Result<()> {
     for fault in [
+        ArchiveFault::ArchiveError,
         ArchiveFault::IncompleteArchive,
         ArchiveFault::NextSubtreeBecomesLoaded,
     ] {
         let (mut app, mut events, _ops) = make_test_app_with_channels().await;
         let ids = seed_archive_except_threads(&mut app).await?;
         let runtime = app.state_db.clone().expect("fixture database");
+        let missing_parent = ThreadId::from_u128(1);
+        for id in &ids[1..] {
+            runtime
+                .upsert_thread_spawn_edge(
+                    missing_parent,
+                    *id,
+                    DirectionalThreadSpawnEdgeStatus::Open,
+                )
+                .await
+                .map_err(std::io::Error::other)?;
+        }
         let server_runtime = runtime.clone();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let endpoint = crate::resolve_remote_addr(&format!("ws://{}", listener.local_addr()?))?;
@@ -215,7 +262,13 @@ async fn archive_except_lifecycle_stops_after_incomplete_archive_or_changed_repl
                                 )
                                 .unwrap(),
                             );
-                            Some(json!({"result": {}}))
+                            if matches!(fault, ArchiveFault::ArchiveError) {
+                                Some(
+                                    json!({"error": {"code": -32603, "message": "archive failed"}}),
+                                )
+                            } else {
+                                Some(json!({"result": {}}))
+                            }
                         }
                         method => panic!("unexpected request: {method}"),
                     };
@@ -255,6 +308,7 @@ async fn archive_except_lifecycle_stops_after_incomplete_archive_or_changed_repl
         )
         .await?;
         let (archived, loaded_requests, reason) = match fault {
+            ArchiveFault::ArchiveError => (0, 2, "archiving subtree"),
             ArchiveFault::IncompleteArchive => (0, 2, "did not archive the complete subtree"),
             ArchiveFault::NextSubtreeBecomesLoaded => (1, 3, "became unsafe during execution"),
         };
@@ -264,6 +318,28 @@ async fn archive_except_lifecycle_stops_after_incomplete_archive_or_changed_repl
                 .await
                 .map_err(std::io::Error::other)?,
             archived
+        );
+        assert_eq!(
+            runtime
+                .list_thread_spawn_children_with_status(
+                    missing_parent,
+                    DirectionalThreadSpawnEdgeStatus::Closed
+                )
+                .await
+                .map_err(std::io::Error::other)?
+                .len(),
+            archived
+        );
+        assert_eq!(
+            runtime
+                .list_thread_spawn_children_with_status(
+                    missing_parent,
+                    DirectionalThreadSpawnEdgeStatus::Open
+                )
+                .await
+                .map_err(std::io::Error::other)?
+                .len(),
+            2 - archived
         );
         let mut history = String::new();
         while let Ok(event) = events.try_recv() {

@@ -143,7 +143,7 @@ async fn archived_intermediate_keeps_group_connected_and_pinned_descendant_prote
 }
 
 #[tokio::test]
-async fn loaded_descendant_and_open_edge_each_protect_their_whole_group() -> Result<()> {
+async fn loaded_descendant_protects_its_group_and_unloaded_open_group_is_candidate() -> Result<()> {
     let keep = thread_id(20);
     let loaded_root = thread_id(21);
     let loaded_child = thread_id(22);
@@ -163,7 +163,7 @@ async fn loaded_descendant_and_open_edge_each_protect_their_whole_group() -> Res
         (
             loaded_root,
             loaded_child,
-            DirectionalThreadSpawnEdgeStatus::Closed,
+            DirectionalThreadSpawnEdgeStatus::Open,
         ),
         (
             loaded_root,
@@ -190,10 +190,16 @@ async fn loaded_descendant_and_open_edge_each_protect_their_whole_group() -> Res
         vec![ArchiveExceptProtectionReason::Loaded]
     );
     assert_eq!(
-        plan.group_for(open_root)
-            .expect("open group")
-            .protection_reasons,
-        vec![ArchiveExceptProtectionReason::EdgeNotClosed]
+        plan.protected_thread_ids,
+        vec![keep, loaded_root, loaded_child, loaded_sibling]
+    );
+    assert_eq!(plan.candidate_thread_ids, vec![open_root, open_child]);
+    assert_eq!(
+        plan.subtrees,
+        vec![ArchiveExceptSubtree {
+            root_thread_id: open_root,
+            thread_ids: vec![open_root, open_child],
+        }]
     );
     Ok(())
 }
@@ -241,7 +247,8 @@ async fn loaded_unpersisted_keep_protects_known_relations_and_still_allows_other
 }
 
 #[tokio::test]
-async fn orphan_missing_parent_ambiguous_relation_and_cycle_fail_closed_by_group() -> Result<()> {
+async fn orphan_and_missing_parent_are_candidates_but_ambiguous_and_cycle_groups_are_protected()
+-> Result<()> {
     let keep = thread_id(30);
     let orphan = thread_id(31);
     let missing = thread_id(32);
@@ -289,17 +296,19 @@ async fn orphan_missing_parent_ambiguous_relation_and_cycle_fail_closed_by_group
 
     let plan = runtime.plan_archive_except(request(keep, &[])).await?;
 
+    assert_eq!(plan.candidate_thread_ids, vec![orphan, missing]);
     assert_eq!(
-        plan.group_for(orphan)
-            .expect("orphan group")
-            .protection_reasons,
-        vec![ArchiveExceptProtectionReason::OrphanSubagent]
-    );
-    assert_eq!(
-        plan.group_for(missing)
-            .expect("missing-parent group")
-            .protection_reasons,
-        vec![ArchiveExceptProtectionReason::MissingParent]
+        plan.subtrees,
+        vec![
+            ArchiveExceptSubtree {
+                root_thread_id: orphan,
+                thread_ids: vec![orphan]
+            },
+            ArchiveExceptSubtree {
+                root_thread_id: missing,
+                thread_ids: vec![missing]
+            },
+        ]
     );
     assert_eq!(
         plan.group_for(ambiguous_parent_a)
@@ -313,6 +322,18 @@ async fn orphan_missing_parent_ambiguous_relation_and_cycle_fail_closed_by_group
             .protection_reasons,
         vec![ArchiveExceptProtectionReason::Cycle]
     );
+    let loaded_plan = runtime
+        .plan_archive_except(request(keep, &[orphan, missing]))
+        .await?;
+    assert_eq!(loaded_plan.candidate_thread_ids, Vec::<ThreadId>::new());
+    for thread in [orphan, missing] {
+        let group = loaded_plan.group_for(thread).expect("loaded group");
+        assert_eq!(group.disposition, ArchiveExceptGroupDisposition::Protected);
+        assert_eq!(
+            group.protection_reasons,
+            vec![ArchiveExceptProtectionReason::Loaded]
+        );
+    }
     Ok(())
 }
 

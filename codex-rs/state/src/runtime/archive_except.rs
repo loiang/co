@@ -37,7 +37,6 @@ impl StateRuntime {
             // connect through it; Loaded protection keeps the full component out of candidates.
             threads.push(ThreadRecord {
                 id: request.keep_thread_id,
-                source: String::new(),
                 archived: false,
                 pinned: false,
                 created_at_ms: 0,
@@ -70,15 +69,15 @@ impl StateRuntime {
         &self,
     ) -> anyhow::Result<(Vec<ThreadRecord>, Vec<EdgeRecord>)> {
         let mut transaction = self.pool.begin().await?;
-        let thread_rows = sqlx::query_as::<_, (String, String, bool, bool, i64)>(
-            "SELECT id, source, archived, thread_section_id = ?, \
+        let thread_rows = sqlx::query_as::<_, (String, bool, bool, i64)>(
+            "SELECT id, archived, thread_section_id = ?, \
              COALESCE(created_at_ms, 0) FROM threads ORDER BY id",
         )
         .bind(PINNED_THREAD_SECTION_ID)
         .fetch_all(&mut *transaction)
         .await?;
-        let edge_rows = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT parent_thread_id, child_thread_id, status FROM thread_spawn_edges \
+        let edge_rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT parent_thread_id, child_thread_id FROM thread_spawn_edges \
              ORDER BY parent_thread_id, child_thread_id, status",
         )
         .fetch_all(&mut *transaction)

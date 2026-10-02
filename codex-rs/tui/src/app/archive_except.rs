@@ -11,6 +11,7 @@ use codex_state::ArchiveExceptGroupDisposition;
 use codex_state::ArchiveExceptPlan;
 use codex_state::ArchiveExceptRequest;
 use codex_state::ArchiveExceptSubtree;
+use codex_state::DirectionalThreadSpawnEdgeStatus;
 
 impl App {
     pub(super) async fn prepare_archive_except(
@@ -183,6 +184,12 @@ impl App {
                 "the archive server did not archive the complete subtree rooted at {}",
                 subtree.root_thread_id
             ));
+        }
+        for thread_id in &subtree.thread_ids {
+            state_db
+                .set_thread_spawn_edge_status(*thread_id, DirectionalThreadSpawnEdgeStatus::Closed)
+                .await
+                .map_err(|error| format!("the archived spawn edge could not be closed: {error}"))?;
         }
         Ok(())
     }

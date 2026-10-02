@@ -5,22 +5,20 @@ use std::collections::HashSet;
 
 pub(super) struct ThreadRecord {
     pub(super) id: ThreadId,
-    pub(super) source: String,
     pub(super) archived: bool,
     pub(super) pinned: bool,
     pub(super) created_at_ms: i64,
 }
 
-impl TryFrom<(String, String, bool, bool, i64)> for ThreadRecord {
+impl TryFrom<(String, bool, bool, i64)> for ThreadRecord {
     type Error = anyhow::Error;
 
-    fn try_from(row: (String, String, bool, bool, i64)) -> Result<Self, Self::Error> {
+    fn try_from(row: (String, bool, bool, i64)) -> Result<Self, Self::Error> {
         Ok(Self {
             id: ThreadId::try_from(row.0)?,
-            source: row.1,
-            archived: row.2,
-            pinned: row.3,
-            created_at_ms: row.4,
+            archived: row.1,
+            pinned: row.2,
+            created_at_ms: row.3,
         })
     }
 }
@@ -28,17 +26,15 @@ impl TryFrom<(String, String, bool, bool, i64)> for ThreadRecord {
 pub(super) struct EdgeRecord {
     parent: ThreadId,
     child: ThreadId,
-    status: String,
 }
 
-impl TryFrom<(String, String, String)> for EdgeRecord {
+impl TryFrom<(String, String)> for EdgeRecord {
     type Error = anyhow::Error;
 
-    fn try_from(row: (String, String, String)) -> Result<Self, Self::Error> {
+    fn try_from(row: (String, String)) -> Result<Self, Self::Error> {
         Ok(Self {
             parent: ThreadId::try_from(row.0)?,
             child: ThreadId::try_from(row.1)?,
-            status: row.2,
         })
     }
 }
@@ -48,9 +44,7 @@ pub(super) struct ArchiveExceptGraph {
     pub(super) parent_by_child: HashMap<ThreadId, ThreadId>,
     pub(super) children_by_parent: HashMap<ThreadId, HashSet<ThreadId>>,
     adjacency: HashMap<ThreadId, HashSet<ThreadId>>,
-    pub(super) missing_parent: HashSet<ThreadId>,
     pub(super) ambiguous: HashSet<ThreadId>,
-    pub(super) edge_not_closed: HashSet<ThreadId>,
 }
 
 impl ArchiveExceptGraph {
@@ -77,9 +71,7 @@ impl ArchiveExceptGraph {
             records,
             parent_by_child: HashMap::new(),
             children_by_parent: HashMap::new(),
-            missing_parent: HashSet::new(),
             ambiguous,
-            edge_not_closed: HashSet::new(),
         };
         graph.add_relations(relations);
         Ok(graph)
@@ -107,11 +99,6 @@ impl ArchiveExceptGraph {
             if child_relations.len() > 1 {
                 self.ambiguous.insert(child);
             }
-            if !self.records[&child].archived
-                && child_relations.iter().any(|edge| edge.status != "closed")
-            {
-                self.edge_not_closed.insert(child);
-            }
             let parents = child_relations
                 .iter()
                 .map(|edge| edge.parent)
@@ -122,7 +109,6 @@ impl ArchiveExceptGraph {
             }
             for parent in parents {
                 if !self.records.contains_key(&parent) {
-                    self.missing_parent.insert(child);
                     continue;
                 }
                 self.adjacency.entry(child).or_default().insert(parent);
