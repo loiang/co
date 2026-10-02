@@ -274,7 +274,21 @@ def test_build_uses_official_package_and_emits_bound_assets(
         "--bwrap-bin",
         str(binary),
     ]
-    assert builder_kwargs["env"]["CODEX_REPO_ROOT"] == str(source_repo)
+    assert builder_kwargs["env"]["CODEX_REPO_ROOT"] == str(
+        source_repo / ".states/build"
+    )
+    assert builder_kwargs["cwd"] == source_repo / ".states/build"
+    assert builder_kwargs["env"]["CARGO_TARGET_DIR"] == str(
+        source_repo / "codex-rs/target"
+    )
+    assert builder_kwargs["env"]["CO_BUILD_WORKTREE"] == str(
+        source_repo / ".states/build"
+    )
+    assert builder_kwargs["pass_fds"] == (
+        int(builder_kwargs["env"]["CO_BUILD_LOCK_FD"]),
+    )
+    assert not (source_repo / ".states/build").exists()
+    assert git(source_repo, "branch", "--list", "build/co-*") == ""
     if cores:
         assert builder_kwargs["env"]["CARGO_BUILD_JOBS"] == str(cores)
     else:
@@ -308,6 +322,52 @@ def test_failed_builder_never_writes_latest(source_repo: Path) -> None:
     ):
         build(source_repo)
     assert not (source_repo / ".states/co/build/latest.json").exists()
+    assert not (source_repo / ".states/build").exists()
+    assert not list((source_repo / ".states/co/build").glob("20*"))
+
+
+@pytest.mark.parametrize("change", ["tracked", "staged", "untracked"])
+def test_build_rejects_mutable_source_before_resolving_release(
+    source_repo: Path,
+    change: str,
+) -> None:
+    target = source_repo / ("new-file" if change == "untracked" else "flake.lock")
+    target.write_text("changed")
+    if change == "staged":
+        git(source_repo, "add", str(target))
+    with (
+        patch("build._official_version") as release,
+        pytest.raises(LifecycleError, match="工作树存在"),
+    ):
+        build(source_repo)
+    release.assert_not_called()
+    assert not (source_repo / ".states/build").exists()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_interrupted_build_preserves_latest_and_removes_partial_output(
+    source_repo: Path,
+    failure: type[BaseException],
+) -> None:
+    latest = source_repo / ".states/co/build/latest.json"
+    latest.parent.mkdir(parents=True)
+    latest.write_text('{"previous":"verified"}')
+
+    def interrupt(request) -> None:
+        (request.output_dir / "partial-output").write_text("partial")
+        (request.root / "flake.lock").write_text("stamped")
+        raise failure("interrupted")
+
+    with (
+        patch("build._official_version", return_value="0.154.0"),
+        patch("build.build_package", side_effect=interrupt),
+        pytest.raises(failure, match="interrupted"),
+    ):
+        build(source_repo)
+    assert latest.read_text() == '{"previous":"verified"}'
+    assert not list(latest.parent.glob("20*"))
+    assert not (source_repo / ".states/build").exists()
+    assert (source_repo / "flake.lock").read_text() == "{}"
 
 
 @pytest.mark.parametrize(

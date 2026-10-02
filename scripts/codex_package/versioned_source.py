@@ -1,7 +1,7 @@
-"""Stamp Cargo's workspace version in a disposable copy of the current source.
+"""Stamp Cargo's workspace version in disposable build sources.
 
-Cargo owns CARGO_PKG_VERSION and its components. Updating an isolated manifest
-keeps every crate consistent without editing the user's manifest or lockfile.
+Managed co builds already provide an isolated worktree and stamp it in place.
+Standalone packaging retains a disposable copy to preserve the caller's files.
 """
 
 import json
@@ -30,11 +30,15 @@ def versioned_workspace(
         env: Build environment, including the original absolute target directory.
 
     Yields:
-        Original workspace if already stamped, otherwise its disposable copy.
+        Managed build worktree in place, otherwise a disposable source copy.
     """
     workspace = root / "codex-rs"
     manifest = (workspace / "Cargo.toml").read_text(encoding="utf-8")
     if tomllib.loads(manifest)["workspace"]["package"]["version"] == version:
+        yield workspace
+        return
+    if env.get("CO_BUILD_WORKTREE") == str(root):
+        _stamp_and_update(workspace, manifest, version, (cargo, env))
         yield workspace
         return
     with tempfile.TemporaryDirectory(
@@ -43,19 +47,34 @@ def versioned_workspace(
         staged_root = Path(temp)
         _copy_source(root, staged_root)
         staged = staged_root / "codex-rs"
-        _stamp_manifest(staged / "Cargo.toml", manifest, version)
-        original_pins = _dependency_pins(staged / "Cargo.lock")
-        subprocess.run(
-            [cargo, "update", "--workspace"],
-            cwd=staged,
-            env=env,
-            check=True,
-        )
-        if _dependency_pins(staged / "Cargo.lock") != original_pins:
-            raise RuntimeError(
-                "Release version stamping changed locked dependency pins"
-            )
+        _stamp_and_update(staged, manifest, version, (cargo, env))
         yield staged
+
+
+def _stamp_and_update(
+    workspace: Path,
+    manifest: str,
+    version: str,
+    builder: tuple[str, dict[str, str]],
+) -> None:
+    cargo, env = builder
+    _stamp_manifest(workspace / "Cargo.toml", manifest, version)
+    original_pins = _dependency_pins(workspace / "Cargo.lock")
+    subprocess.run(
+        [cargo, "update", "--workspace"],
+        cwd=workspace,
+        env=env,
+        check=True,
+        pass_fds=build_lock_fds(env),
+    )
+    if _dependency_pins(workspace / "Cargo.lock") != original_pins:
+        raise RuntimeError("Release version stamping changed locked dependency pins")
+
+
+def build_lock_fds(env: dict[str, str]) -> tuple[int, ...]:
+    """Keep the owning co build locked while an orphaned Cargo process runs."""
+    descriptor = env.get("CO_BUILD_LOCK_FD")
+    return (int(descriptor),) if descriptor is not None else ()
 
 
 def _copy_source(root: Path, destination: Path) -> None:

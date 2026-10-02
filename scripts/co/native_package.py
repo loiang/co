@@ -45,6 +45,8 @@ class PackageRequest:
     source_rev: str
     version: str
     cores: int = 0
+    target_dir: Path | None = None
+    lock_fd: int | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,11 @@ def _environment(request: PackageRequest) -> dict[str, str]:
     env = dict(os.environ)
     env["CODEX_REPO_ROOT"] = str(request.root)
     env["PYTHONPATH"] = str(request.root / "scripts")
+    if request.target_dir is not None:
+        env["CARGO_TARGET_DIR"] = str(request.target_dir.resolve())
+        env["CO_BUILD_WORKTREE"] = str(request.root)
+    if request.lock_fd is not None:
+        env["CO_BUILD_LOCK_FD"] = str(request.lock_fd)
     env.pop("CARGO_BUILD_JOBS", None)
     if request.cores:
         env["CARGO_BUILD_JOBS"] = str(request.cores)
@@ -131,7 +138,13 @@ def build_package(request: PackageRequest) -> NativePackage:
     ]
     if bwrap_bin is not None:
         command.extend(["--bwrap-bin", str(bwrap_bin)])
-    run(command, cwd=request.root, env=env, capture=OutputMode.INHERIT)
+    run(
+        command,
+        cwd=request.root,
+        env=env,
+        capture=OutputMode.INHERIT,
+        pass_fds=(request.lock_fd,) if request.lock_fd is not None else (),
+    )
     run(
         [sys.executable, "-c", _VALIDATE_PACKAGE, str(package_dir), target],
         cwd=request.root,

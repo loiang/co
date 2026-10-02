@@ -177,7 +177,9 @@
               pkgs.cmake
               pkgs.dotslash
               pkgs.file
+              pkgs.gh
               pkgs.git
+              pkgs.gnumake
               pkgs.llvmPackages.clang
               pkgs.llvmPackages.libclang.lib
               pkgs.nix-prefetch-git

@@ -37,6 +37,7 @@ def run(
     cwd: Path,
     capture: bool | OutputMode = True,
     env: dict[str, str] | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     """Run one command and raise a diagnostic failure without shell parsing.
 
@@ -45,6 +46,7 @@ def run(
         cwd: Explicit working directory that owns the operation.
         capture: Output policy; legacy booleans capture both streams or neither.
         env: Optional complete child environment.
+        pass_fds: Owned descriptors a child must keep for lifecycle locking.
 
     Returns:
         The successful completed process.
@@ -68,6 +70,7 @@ def run(
         ),
         text=True,
         env=env,
+        pass_fds=pass_fds,
     )
     if result.returncode:
         detail = (result.stderr or result.stdout or "").strip()

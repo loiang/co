@@ -101,3 +101,33 @@ def test_lock_refresh_failure_preserves_original_files(workspace: Path) -> None:
     ):
         pytest.fail("A failed Cargo lock refresh must prevent the build")
     assert (manifest.read_bytes(), lock.read_bytes()) == original
+
+
+def test_managed_build_worktree_stamps_in_place_and_uses_persistent_target(
+    workspace: Path,
+    tmp_path: Path,
+) -> None:
+    env = {
+        **os.environ,
+        "CO_BUILD_WORKTREE": str(workspace),
+        "CARGO_TARGET_DIR": str(tmp_path / "persistent-target"),
+    }
+    with versioned_workspace(workspace, "0.159.3", "cargo", env) as staged:
+        assert staged == workspace / "codex-rs"
+        result = subprocess.run(
+            ["cargo", "run", "--locked", "--offline", "--quiet"],
+            cwd=staged,
+            env=env,
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        assert result.stdout.strip() == "0.159.3|0.159.3"
+        assert (tmp_path / "persistent-target/debug/version-probe").is_file()
+    assert staged.exists()
+    assert (
+        tomllib.loads((staged / "Cargo.toml").read_text())["workspace"]["package"][
+            "version"
+        ]
+        == "0.159.3"
+    )

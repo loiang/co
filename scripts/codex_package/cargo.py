@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .targets import REPO_ROOT, PackageVariant, TargetSpec
 from .v8 import resolve_codex_v8_cargo_env
-from .versioned_source import versioned_workspace
+from .versioned_source import build_lock_fds, versioned_workspace
 
 CODEX_RS_ROOT = REPO_ROOT / "codex-rs"
 
@@ -76,7 +76,13 @@ def build_source_binaries(
         with versioned_workspace(
             REPO_ROOT, package_version, cargo, cargo_env
         ) as workspace:
-            subprocess.run(cmd, cwd=workspace, check=True, env=cargo_env)
+            subprocess.run(
+                cmd,
+                cwd=workspace,
+                check=True,
+                env=cargo_env,
+                pass_fds=build_lock_fds(cargo_env),
+            )
 
     output_dir = cargo_profile_output_dir(spec, profile)
     outputs = SourceBuildOutputs(

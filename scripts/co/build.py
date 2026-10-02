@@ -2,19 +2,21 @@
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from common import (
     LifecycleError,
-    require_no_untracked,
+    require_clean,
     require_repo,
     sha256,
     timestamp,
     write_json,
 )
 from evidence import source_identity
+from build_worktree import build_lock, build_worktree
 from native_package import NativePackage, PackageRequest, build_package
 
 _OFFICIAL_RELEASE_API = "repos/openai/codex/releases/latest"
@@ -133,14 +135,33 @@ def build(repository: Path, cores: int = 0) -> Path:
     if cores < 0:
         raise LifecycleError("Cargo cores 必须是非负整数")
     root = require_repo(repository)
-    require_no_untracked(root)
-    identity = source_identity(root)
-    version = _official_version()
-    build_dir = (
-        root / ".states/co/build" / f"{timestamp()}-{identity['sourceRev'][:10]}"
-    )
-    build_dir.mkdir(parents=True, exist_ok=False)
-    package = build_package(
-        PackageRequest(root, build_dir, identity["sourceRev"], version, cores)
-    )
-    return _emit_assets(root, identity, package, version)
+    require_clean(root)
+    with build_lock(root) as lock_fd:
+        identity = source_identity(root)
+        version = _official_version()
+        build_dir = (
+            root / ".states/co/build" / f"{timestamp()}-{identity['sourceRev'][:10]}"
+        )
+        build_dir.mkdir(parents=True, exist_ok=False)
+        try:
+            with build_worktree(root, identity["sourceRev"]) as source:
+                package = build_package(
+                    PackageRequest(
+                        source,
+                        build_dir,
+                        identity["sourceRev"],
+                        version,
+                        cores,
+                        target_dir=root / "codex-rs/target",
+                        lock_fd=lock_fd,
+                    )
+                )
+            return _emit_assets(root, identity, package, version)
+        except BaseException as error:
+            try:
+                shutil.rmtree(build_dir)
+            except OSError as cleanup_error:
+                raise LifecycleError(
+                    f"build 失败: {error}; artifact 清理失败: {cleanup_error}"
+                ) from error
+            raise
