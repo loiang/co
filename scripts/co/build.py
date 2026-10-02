@@ -48,6 +48,8 @@ def _emit_assets(
     record = {
         "schemaVersion": 3,
         **identity,
+        "sourceVersion": manifest["sourceVersion"],
+        "platform": manifest["platform"],
         "completedAt": timestamp(),
         "artifactDir": str(package.directory.relative_to(root)),
         "artifact": package.metadata,

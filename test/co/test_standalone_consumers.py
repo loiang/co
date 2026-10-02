@@ -44,6 +44,33 @@ def test_standalone_local_evidence_accepts_only_verified_binary(tmp_path: Path) 
         verify_build_record(tmp_path, record)
 
 
+def test_producer_record_is_consumable_without_manually_added_identity_fields(
+    tmp_path: Path,
+) -> None:
+    from build import _emit_assets
+    from native_package import NativePackage
+
+    archive, _, _ = make_assets(tmp_path, SOURCE)
+    package = NativePackage(
+        directory=tmp_path / "artifact",
+        archive=archive,
+        platform="x86_64-linux",
+        metadata=DESCRIPTOR,
+    )
+    record_path = _emit_assets(
+        tmp_path,
+        {
+            "sourceRev": SOURCE,
+            "flakeLockSha256": "c" * 64,
+            "dirty": False,
+        },
+        package,
+        VERSION,
+    )
+    record = json.loads(record_path.read_text())
+    assert verify_build_record(tmp_path, record) == tmp_path / "artifact"
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

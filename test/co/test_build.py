@@ -266,6 +266,8 @@ def test_build_emits_only_stamped_cli_without_runtime_downloads(
         latest = build(source_repo, cores)
     record = json.loads(latest.read_text())
     assert record["schemaVersion"] == 3
+    assert record["sourceVersion"] == version
+    assert record["platform"] == "x86_64-linux"
     assert "package" not in record and "packageDir" not in record
     expected = {
         "kind": "standalone-cli",
@@ -288,6 +290,10 @@ def test_build_emits_only_stamped_cli_without_runtime_downloads(
     with tarfile.open(archive) as bundle:
         assert [(member.name, member.isreg()) for member in bundle] == [("codex", True)]
     payload = json.loads(manifest.read_text())
+    assert (record["sourceVersion"], record["platform"]) == (
+        payload["sourceVersion"],
+        payload["platform"],
+    )
     assert payload["schemaVersion"] == 3 and payload["sourceVersion"] == version
     assert payload["artifact"] == expected and "package" not in payload
     assert payload["checksums"] == {
