@@ -6,11 +6,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .targets import REPO_ROOT
-from .targets import PackageVariant
-from .targets import TargetSpec
+from .targets import REPO_ROOT, PackageVariant, TargetSpec
 from .v8 import resolve_codex_v8_cargo_env
-
+from .versioned_source import versioned_workspace
 
 CODEX_RS_ROOT = REPO_ROOT / "codex-rs"
 
@@ -68,18 +66,17 @@ def build_source_binaries(
 
         cargo_env = dict(os.environ)
         cargo_env["CODEX_CLI_VERSION"] = package_version
+        cargo_env["CARGO_TARGET_DIR"] = str(cargo_target_dir().resolve())
         if bwrap_bin is not None:
             cargo_env["CODEX_BWRAP_SHA256"] = _sha256_file(bwrap_bin)
         if entrypoint_bin is None or code_mode_host_bin is None:
             cargo_env.update(resolve_codex_v8_cargo_env(spec))
 
         print("+", " ".join(cmd))
-        subprocess.run(
-            cmd,
-            cwd=CODEX_RS_ROOT,
-            check=True,
-            env=cargo_env,
-        )
+        with versioned_workspace(
+            REPO_ROOT, package_version, cargo, cargo_env
+        ) as workspace:
+            subprocess.run(cmd, cwd=workspace, check=True, env=cargo_env)
 
     output_dir = cargo_profile_output_dir(spec, profile)
     outputs = SourceBuildOutputs(
