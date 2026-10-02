@@ -3,6 +3,9 @@
 #[path = "tests/archive_except_lifecycle_tests.rs"]
 mod archive_except_lifecycle_tests;
 
+#[path = "tests/archive_except_live_tests.rs"]
+mod archive_except_live_tests;
+
 #[path = "tests/math_interruption_tests.rs"]
 mod math_interruption_tests;
 #[path = "tests/mcp_login_tests.rs"]
