@@ -13,6 +13,14 @@ from common import LifecycleError, OutputMode, run
 from build_tools import prepend_tool_path, resolve_make_bin
 from standalone_artifact import artifact_metadata, validate_cli_directory
 
+# Match the native strip flags in the upstream release-symbols workflow;
+# Windows debug symbols already live in a separate PDB beside Cargo's binary.
+_STRIP_FLAGS = {
+    "linux": ["--strip-debug", "--strip-unneeded"],
+    "darwin": ["-S", "-x"],
+    "windows": [],
+}
+
 _HOST_TARGET = """
 import json
 import sys
@@ -148,12 +156,20 @@ def build_package(request: PackageRequest) -> NativePackage:
     binary = Path(env["CARGO_TARGET_DIR"]) / "release" / entrypoint
     if binary.is_symlink() or not binary.is_file() or not binary.stat().st_mode & 0o111:
         raise LifecycleError("Cargo 未生成普通可执行 codex binary")
-    result = run([str(binary), "--version"], cwd=request.root, env=env)
-    if (result.stdout or "").strip() != f"codex-cli {request.version}":
-        raise LifecycleError("CLI --version 与所选官方 tag 不一致")
     directory = request.output_dir / "artifact"
     directory.mkdir()
-    shutil.copy2(binary, directory / entrypoint)
+    executable = directory / entrypoint
+    shutil.copy2(binary, executable)
+    flags = _STRIP_FLAGS[platform.rsplit("-", 1)[1]]
+    if flags:
+        run(
+            [env.get("STRIP", "strip"), *flags, str(executable)],
+            cwd=request.root,
+            env=env,
+        )
+    result = run([str(executable), "--version"], cwd=request.root, env=env)
+    if (result.stdout or "").strip() != f"codex-cli {request.version}":
+        raise LifecycleError("CLI --version 与所选官方 tag 不一致")
     validate_cli_directory(directory, metadata)
     archive = request.output_dir / f"co-cli-{platform}-{request.source_rev[:10]}.tar.gz"
     with tarfile.open(archive, "w:gz") as output:

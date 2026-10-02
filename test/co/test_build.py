@@ -236,6 +236,19 @@ def test_build_emits_only_stamped_cli_without_runtime_downloads(
             return subprocess.CompletedProcess(
                 command, 0, "host: x86_64-unknown-linux-gnu\n", ""
             )
+        if command[0] == "strip":
+            assert command[1:-1] == ["--strip-debug", "--strip-unneeded"]
+            copied = Path(command[-1])
+            original = source_repo / "codex-rs/target/release/codex"
+            assert copied != original and copied.parent.name == "artifact"
+            assert copied.read_bytes() == original.read_bytes()
+            assert copied.stat().st_mode == original.stat().st_mode
+            copied.write_bytes(copied.read_bytes() + b"# stripped publication copy\n")
+            return subprocess.CompletedProcess(command, 0)
+        if command[-1] == "--version":
+            executable = Path(command[0])
+            assert executable.parent.name == "artifact"
+            assert b"stripped publication copy" in executable.read_bytes()
         return run(command, **kwargs)
 
     metadata = json.dumps(
@@ -263,6 +276,10 @@ def test_build_emits_only_stamped_cli_without_runtime_downloads(
     assert record["artifact"] == expected
     directory = source_repo / record["artifactDir"]
     assert [path.name for path in directory.iterdir()] == ["codex"]
+    original_binary = source_repo / "codex-rs/target/release/codex"
+    assert b"stripped publication copy" not in original_binary.read_bytes()
+    assert b"stripped publication copy" in (directory / "codex").read_bytes()
+    assert original_binary.stat().st_mode == (directory / "codex").stat().st_mode
     assert (
         run([str(directory / "codex"), "--version"], cwd=source_repo).stdout.strip()
         == f"codex-cli {version}"
@@ -370,6 +387,8 @@ def test_invalid_cli_output_never_emits_evidence(
                 binary.rename(actual)
                 binary.symlink_to(actual)
             return subprocess.CompletedProcess(command, 0)
+        if command[0] == "strip":
+            return subprocess.CompletedProcess(command, 0)
         if command[-1] == "--version":
             return subprocess.CompletedProcess(command, 0, "codex-cli 0.0.0\n", "")
         return run(command, **kwargs)
@@ -391,6 +410,27 @@ def test_build_rejects_negative_core_limit_before_commands(source_repo: Path) ->
     ):
         build(source_repo, -1)
     command.assert_not_called()
+
+
+def test_strip_failure_never_emits_evidence(
+    source_repo: Path, cargo_boundary: Path
+) -> None:
+    def capture(command: list[str], **kwargs: object):
+        if command[0] == "rustc":
+            return subprocess.CompletedProcess(
+                command, 0, "host: x86_64-unknown-linux-gnu\n", ""
+            )
+        if command[0] == "strip":
+            raise LifecycleError("strip failed")
+        return run(command, **kwargs)
+
+    with (
+        patch("build._official_version", return_value="0.162.0-alpha.4"),
+        patch("native_package.run", side_effect=capture),
+        pytest.raises(LifecycleError, match="strip failed"),
+    ):
+        build(source_repo)
+    assert not (source_repo / ".states/co/build/latest.json").exists()
 
 
 @pytest.mark.parametrize(
