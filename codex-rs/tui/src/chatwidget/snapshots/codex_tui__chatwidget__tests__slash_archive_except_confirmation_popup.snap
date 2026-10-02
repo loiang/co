@@ -1,13 +1,14 @@
 ---
 source: tui/src/chatwidget/tests/slash_commands.rs
-assertion_line: 2925
 expression: "render_bottom_popup(&chat, 80)"
 ---
   Archive 2 sessions in 1 groups?
-  Global across projects and working directories. 0 protected; 0 limit-skipped
+  Global across projects and working directories. 0 protected; 0
+  limit-skipped. The current loaded session group is kept.
+
 
 › 1. No, keep all sessions (default)  Cancel without archiving
-  2. Yes, archive 2 sessions          Archive 1 complete groups using the
-                                      embedded app server
+  2. Yes, archive 2 sessions          Archive 1 complete groups using the local
+                                      app server
 
-  Press enter to confirm or esc to go back
+  enter select · esc back

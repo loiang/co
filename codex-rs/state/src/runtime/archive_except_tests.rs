@@ -199,6 +199,48 @@ async fn loaded_descendant_and_open_edge_each_protect_their_whole_group() -> Res
 }
 
 #[tokio::test]
+async fn loaded_unpersisted_keep_protects_known_relations_and_still_allows_other_roots()
+-> Result<()> {
+    let parent = thread_id(26);
+    let keep = thread_id(27);
+    let descendant = thread_id(28);
+    let other_root = thread_id(29);
+    let runtime = runtime_with_threads(&[parent, descendant, other_root]).await?;
+    edge(
+        &runtime,
+        parent,
+        keep,
+        DirectionalThreadSpawnEdgeStatus::Closed,
+    )
+    .await?;
+    edge(
+        &runtime,
+        keep,
+        descendant,
+        DirectionalThreadSpawnEdgeStatus::Closed,
+    )
+    .await?;
+
+    let plan = runtime.plan_archive_except(request(keep, &[keep])).await?;
+
+    assert_eq!(plan.protected_thread_ids, vec![parent, keep, descendant]);
+    assert_eq!(plan.candidate_thread_ids, vec![other_root]);
+    assert_eq!(
+        plan.group_for(parent)
+            .expect("group related to unpersisted keep")
+            .protection_reasons,
+        vec![ArchiveExceptProtectionReason::Loaded]
+    );
+    assert!(
+        !plan
+            .subtrees
+            .iter()
+            .any(|subtree| subtree.root_thread_id == keep)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn orphan_missing_parent_ambiguous_relation_and_cycle_fail_closed_by_group() -> Result<()> {
     let keep = thread_id(30);
     let orphan = thread_id(31);

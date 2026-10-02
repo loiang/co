@@ -142,8 +142,11 @@ impl App {
     }
 
     fn archive_except_context(&self) -> Result<(ThreadId, StateDbHandle), String> {
-        if !matches!(self.app_server_target, AppServerTarget::Embedded) {
-            return Err("'/archive-except' is available only for local embedded sessions.".into());
+        if matches!(self.app_server_target, AppServerTarget::Remote { .. }) {
+            return Err(
+                "'/archive-except' is available only for local embedded or local daemon sessions."
+                    .into(),
+            );
         }
         if self.chat_widget.task_is_running() {
             return Err("'/archive-except' is disabled while a task is in progress.".into());

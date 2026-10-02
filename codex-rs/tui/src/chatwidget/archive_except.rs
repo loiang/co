@@ -33,7 +33,7 @@ impl ChatWidget {
                 SelectionItem {
                     name: format!("Yes, archive {candidate_count} sessions"),
                     description: Some(format!(
-                        "Archive {} complete groups using the embedded app server",
+                        "Archive {} complete groups using the local app server",
                         summary.candidate_groups
                     )),
                     actions: vec![Box::new(move |tx| {

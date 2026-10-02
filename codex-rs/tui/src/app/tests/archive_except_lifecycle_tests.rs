@@ -74,55 +74,99 @@ async fn confirm_archive_except_popup(
 }
 
 #[tokio::test]
-async fn archive_except_lifecycle_embedded_archives_confirmed_threads() -> Result<()> {
+async fn archive_except_lifecycle_embedded_and_local_daemon_archive_confirmed_threads() -> Result<()>
+{
+    let endpoint = crate::resolve_remote_addr("ws://127.0.0.1:1")?;
+    for target in [
+        crate::AppServerTarget::Embedded,
+        crate::AppServerTarget::LocalDaemon {
+            endpoint,
+            allow_embedded_fallback: false,
+        },
+    ] {
+        let (mut app, mut events, _ops) = make_test_app_with_channels().await;
+        app.app_server_target = target;
+        let ids = seed_archive_except_threads(&mut app).await?;
+        let runtime = app.state_db.clone().expect("fixture database");
+        let mut session = crate::start_embedded_app_server_for_picker(&app.config).await?;
+        let plan = confirm_archive_except_popup(&mut app, &mut session, &mut events).await?;
+        assert_eq!(plan.candidate_thread_ids.len(), 2);
+        assert_eq!(
+            runtime
+                .count_archived_threads(&ids)
+                .await
+                .map_err(std::io::Error::other)?,
+            0
+        );
+        let mut tui = crate::tui::test_support::make_test_tui()?;
+        app.handle_event(
+            &mut tui,
+            &mut session,
+            AppEvent::ConfirmArchiveExcept(plan.clone()),
+        )
+        .await?;
+        assert_eq!(
+            runtime
+                .count_archived_threads(&plan.candidate_thread_ids)
+                .await
+                .map_err(std::io::Error::other)?,
+            2
+        );
+        assert_eq!(
+            runtime
+                .count_archived_threads(&[ids[0]])
+                .await
+                .map_err(std::io::Error::other)?,
+            0
+        );
+        for id in &plan.candidate_thread_ids {
+            let metadata = runtime
+                .get_thread(*id)
+                .await
+                .map_err(std::io::Error::other)?
+                .expect("archived thread");
+            assert!(metadata.archived_at.is_some());
+            assert!(metadata.rollout_path.is_file());
+            assert!(
+                metadata
+                    .rollout_path
+                    .starts_with(app.config.codex_home.join("archived_sessions"))
+            );
+        }
+        session.shutdown().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn archive_except_rejects_remote_sessions_with_clear_error() -> Result<()> {
     let (mut app, mut events, _ops) = make_test_app_with_channels().await;
-    let ids = seed_archive_except_threads(&mut app).await?;
-    let runtime = app.state_db.clone().expect("fixture database");
+    app.app_server_target = crate::AppServerTarget::Remote {
+        endpoint: crate::resolve_remote_addr("ws://127.0.0.1:1")?,
+    };
     let mut session = crate::start_embedded_app_server_for_picker(&app.config).await?;
-    let plan = confirm_archive_except_popup(&mut app, &mut session, &mut events).await?;
-    assert_eq!(plan.candidate_thread_ids.len(), 2);
-    assert_eq!(
-        runtime
-            .count_archived_threads(&ids)
-            .await
-            .map_err(std::io::Error::other)?,
-        0
-    );
     let mut tui = crate::tui::test_support::make_test_tui()?;
     app.handle_event(
         &mut tui,
         &mut session,
-        AppEvent::ConfirmArchiveExcept(plan.clone()),
+        AppEvent::PrepareArchiveExcept(crate::archive_except::ArchiveExceptOptions::default()),
     )
     .await?;
-    assert_eq!(
-        runtime
-            .count_archived_threads(&plan.candidate_thread_ids)
-            .await
-            .map_err(std::io::Error::other)?,
-        2
-    );
-    assert_eq!(
-        runtime
-            .count_archived_threads(&[ids[0]])
-            .await
-            .map_err(std::io::Error::other)?,
-        0
-    );
-    for id in &plan.candidate_thread_ids {
-        let metadata = runtime
-            .get_thread(*id)
-            .await
-            .map_err(std::io::Error::other)?
-            .expect("archived thread");
-        assert!(metadata.archived_at.is_some());
-        assert!(metadata.rollout_path.is_file());
-        assert!(
-            metadata
-                .rollout_path
-                .starts_with(app.config.codex_home.join("archived_sessions"))
-        );
-    }
+    let rendered = events
+        .try_recv()
+        .ok()
+        .and_then(|event| match event {
+            AppEvent::InsertHistoryCell(cell) => Some(
+                cell.display_lines(200)
+                    .into_iter()
+                    .map(|line| line.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .expect("remote rejection message");
+    insta::assert_snapshot!(rendered, @r"■ '/archive-except' is available only for local embedded or local daemon sessions.");
     session.shutdown().await?;
     Ok(())
 }

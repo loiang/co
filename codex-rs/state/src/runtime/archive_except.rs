@@ -26,7 +26,23 @@ impl StateRuntime {
         &self,
         request: ArchiveExceptRequest,
     ) -> anyhow::Result<ArchiveExceptPlan> {
-        let (threads, edges) = self.load_archive_except_snapshot().await?;
+        let (mut threads, edges) = self.load_archive_except_snapshot().await?;
+        if !threads
+            .iter()
+            .any(|thread| thread.id == request.keep_thread_id)
+            && request.loaded_thread_ids.contains(&request.keep_thread_id)
+        {
+            // A newly started app-server thread may be loaded before its first rollout is
+            // flushed to SQLite. Keep this record in-memory so known spawn edges still
+            // connect through it; Loaded protection keeps the full component out of candidates.
+            threads.push(ThreadRecord {
+                id: request.keep_thread_id,
+                source: String::new(),
+                archived: false,
+                pinned: false,
+                created_at_ms: 0,
+            });
+        }
         ArchiveExceptGraph::from_rows(threads, edges)?.plan(request)
     }
 
