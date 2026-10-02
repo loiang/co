@@ -61,7 +61,12 @@ def test_host_integration(repository: Path, ni_repository: Path) -> Path:
     package = verify_build_record(root, build_record)
     host_store = build_official_host(root, resolved_ni)
     host_binary = Path(host_store) / "bin/codex-code-mode-host"
-    codex_binary = package / build_record["package"]["entrypoint"]
+    metadata = (
+        build_record["artifact"]
+        if build_record["schemaVersion"] == 3
+        else build_record["package"]
+    )
+    codex_binary = package / metadata["entrypoint"]
     command = test_candidate_binaries(root, codex_binary, host_binary)
     record = {
         "schemaVersion": 1,

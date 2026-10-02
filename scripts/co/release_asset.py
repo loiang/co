@@ -12,13 +12,14 @@ import re
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
 
 from common import LifecycleError, git, sha256
 from package_verification import package_metadata, verified_package
+from release_bundle import Artifact, ReleaseBundle
+from standalone_artifact import artifact_metadata, verified_cli_archive
 
 REPOSITORY = "loiang/co"
 REPOSITORY_URL = "https://github.com/loiang/co.git"
@@ -30,61 +31,6 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_MANIFEST_SIZE = 64 * 1024
 MAX_CHECKSUM_SIZE = 4 * 1024
 MAX_BINARY_SIZE = 1024 * 1024 * 1024
-
-
-@dataclass(frozen=True)
-class Artifact:
-    """Describe one downloaded release asset and its verified file identity."""
-
-    name: str
-    url: str
-    path: Path
-    sha256: str
-    size: int
-
-
-@dataclass(frozen=True)
-class ReleaseBundle:
-    """Bind one CLI archive and producer evidence to an immutable source tag."""
-
-    tag: str
-    source_rev: str
-    source_version: str
-    platform: str
-    cli: Artifact
-    manifest: Artifact
-    checksums: Artifact
-    binary_sha256: str
-    binary_size: int
-    package: dict[str, Any]
-
-    def evidence(self) -> dict[str, Any]:
-        """Return stable release facts without leaking machine-local paths."""
-
-        def details(artifact: Artifact) -> dict[str, str | int]:
-            return {
-                "name": artifact.name,
-                "url": artifact.url,
-                "sha256": artifact.sha256,
-                "size": artifact.size,
-            }
-
-        return {
-            "repository": REPOSITORY,
-            "releaseTag": self.tag,
-            "sourceRev": self.source_rev,
-            "sourceVersion": self.source_version,
-            "platform": self.platform,
-            "package": self.package,
-            "manifest": details(self.manifest),
-            "checksums": details(self.checksums),
-            "cli": {
-                **details(self.cli),
-                "binaryPath": self.package["entrypoint"],
-                "binarySha256": self.binary_sha256,
-                "binarySize": self.binary_size,
-            },
-        }
 
 
 def resolve_release_tag(root: Path, reference: str, source_rev: str) -> str:
@@ -203,13 +149,18 @@ def _manifest_identity(
     platform: str = PLATFORM,
 ) -> tuple[str, str]:
     checksums = payload.get("checksums")
-    metadata = package_metadata(payload)
+    metadata = (
+        artifact_metadata(payload)
+        if payload.get("schemaVersion") == 3
+        else package_metadata(payload)
+    )
     entrypoint = metadata["entrypoint"]
     expected_keys = {entrypoint, archive_name}
     valid = (
-        payload.get("schemaVersion") == 2
+        payload.get("schemaVersion") in (2, 3)
         and payload.get("repository") == REPOSITORY
         and payload.get("sourceRev") == source_rev
+        and SHA_RE.fullmatch(source_rev) is not None
         and payload.get("platform") == platform
         and isinstance(payload.get("sourceVersion"), str)
         and bool(payload.get("sourceVersion"))
@@ -257,8 +208,10 @@ def fetch_release_bundle(root: Path, tag: str, source_rev: str) -> ReleaseBundle
     archive_sha = str(payload["checksums"][archive_name])
     if cli.sha256 != expected[archive_name] or cli.sha256 != archive_sha:
         raise LifecycleError("CLI archive SHA-256 在 manifest/SHA256SUMS 间不一致")
-    metadata = package_metadata(payload)
-    with verified_package(cli.path, metadata, binary_sha) as directory:
+    standalone = payload.get("schemaVersion") == 3
+    metadata = artifact_metadata(payload) if standalone else package_metadata(payload)
+    verifier = verified_cli_archive if standalone else verified_package
+    with verifier(cli.path, metadata, binary_sha) as directory:
         binary_size = (directory / metadata["entrypoint"]).stat().st_size
     return ReleaseBundle(
         tag,
@@ -270,19 +223,22 @@ def fetch_release_bundle(root: Path, tag: str, source_rev: str) -> ReleaseBundle
         sums,
         binary_sha,
         binary_size,
-        metadata,
+        None if standalone else metadata,
+        metadata if standalone else None,
     )
 
 
 @contextmanager
 def verified_cli(bundle: ReleaseBundle) -> Iterator[Path]:
-    """Materialize the verified entrypoint alongside all required package resources."""
+    """Materialize the verified CLI using its declared standalone or legacy layout."""
     if sha256(bundle.cli.path) != bundle.cli.sha256:
         raise LifecycleError("CLI archive SHA-256 在下载后发生变化")
-    with verified_package(
-        bundle.cli.path, bundle.package, bundle.binary_sha256
-    ) as directory:
-        binary = directory / bundle.package["entrypoint"]
+    metadata = bundle.artifact if bundle.artifact is not None else bundle.package
+    if metadata is None:
+        raise LifecycleError("release bundle artifact descriptor 缺失")
+    verifier = verified_cli_archive if bundle.artifact is not None else verified_package
+    with verifier(bundle.cli.path, metadata, bundle.binary_sha256) as directory:
+        binary = directory / metadata["entrypoint"]
         if binary.stat().st_size != bundle.binary_size:
             raise LifecycleError("CLI binary size 与 archive metadata 不一致")
         yield binary

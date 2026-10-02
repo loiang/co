@@ -37,10 +37,10 @@ def read_build_record(root: Path, identity: dict[str, Any]) -> dict[str, Any]:
 
 
 def _read_build_record(root: Path) -> dict[str, Any]:
-    """Read a native-package build record without requiring current-source freshness."""
+    """Read supported producer evidence without requiring current-source freshness."""
     record = read_json(root / ".states/co/build/latest.json")
-    if record.get("schemaVersion") != 2:
-        raise LifecycleError("build record 必须使用 native package schemaVersion=2")
+    if record.get("schemaVersion") not in (2, 3):
+        raise LifecycleError("build record 必须使用 schemaVersion=2 或 3")
     return record
 
 
@@ -111,7 +111,11 @@ def _verify_manifest(
 
 
 def verify_build_record(root: Path, record: dict[str, Any]) -> Path:
-    """Bind a v2 local package to its complete archive before host tests or publish."""
+    """Bind local CLI output to its supported archive contract before publication."""
+    if record.get("schemaVersion") == 3:
+        from standalone_evidence import verify_standalone_record
+
+        return verify_standalone_record(root, record, _asset_paths(root, record))
     raw = record.get("packageDir")
     if (
         record.get("schemaVersion") != 2

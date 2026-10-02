@@ -1,14 +1,17 @@
-"""Invoke upstream packaging in a child environment without changing import state."""
+"""Compile only the stamped Codex CLI and archive its verified executable."""
 
 import json
 import os
+import shutil
+import tarfile
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from common import LifecycleError, OutputMode, read_json, run
+from common import LifecycleError, OutputMode, run
 from build_tools import prepend_tool_path, resolve_make_bin
+from standalone_artifact import artifact_metadata, validate_cli_directory
 
 _HOST_TARGET = """
 import json
@@ -38,7 +41,7 @@ validate_package_dir(
 
 @dataclass(frozen=True)
 class PackageRequest:
-    """Bind explicit release inputs before launching the official source builder."""
+    """Bind immutable source, CLI version and resource limits before compilation."""
 
     root: Path
     output_dir: Path
@@ -51,7 +54,7 @@ class PackageRequest:
 
 @dataclass(frozen=True)
 class NativePackage:
-    """Carry validated upstream metadata and its complete archive to asset emission."""
+    """Carry the standalone CLI descriptor and its single-executable archive."""
 
     directory: Path
     archive: Path
@@ -63,9 +66,12 @@ def _environment(request: PackageRequest) -> dict[str, str]:
     env = dict(os.environ)
     env["CODEX_REPO_ROOT"] = str(request.root)
     env["PYTHONPATH"] = str(request.root / "scripts")
-    if request.target_dir is not None:
-        env["CARGO_TARGET_DIR"] = str(request.target_dir.resolve())
-        env["CO_BUILD_WORKTREE"] = str(request.root)
+    env["CARGO_TARGET_DIR"] = str(
+        (request.target_dir or request.root / "codex-rs/target").resolve()
+    )
+    env["CO_BUILD_WORKTREE"] = str(request.root)
+    env["CODEX_CLI_VERSION"] = request.version
+    env.pop("CARGO_BUILD_TARGET", None)
     if request.lock_fd is not None:
         env["CO_BUILD_LOCK_FD"] = str(request.lock_fd)
     env.pop("CARGO_BUILD_JOBS", None)
@@ -95,64 +101,61 @@ def _host_target(root: Path, env: dict[str, str]) -> tuple[str, str]:
     return target, platform
 
 
+_BUILD_CLI = """
+import os
+import subprocess
+import sys
+from pathlib import Path
+from codex_package.versioned_source import build_lock_fds, versioned_workspace
+root = Path(sys.argv[1])
+version = sys.argv[2]
+env = dict(os.environ)
+with versioned_workspace(root, version, 'cargo', env) as workspace:
+    subprocess.run(
+        ['cargo', 'build', '--release', '--locked', '-p', 'codex-cli', '--bin', 'codex'],
+        cwd=workspace, env=env, check=True, pass_fds=build_lock_fds(env)
+    )
+"""
+
+
 def build_package(request: PackageRequest) -> NativePackage:
-    """Build and validate the upstream layout with fixed target and version inputs.
-
-    Args:
-        request: Source checkout, isolated output directory, and release inputs.
-
-    Returns:
-        Complete package archive plus metadata read back after upstream validation.
-
-    Raises:
-        LifecycleError: The builder, official validator, or metadata check fails.
-    """
+    """Compile the CLI only, verifying its version before emitting an archive."""
     if request.cores < 0:
         raise LifecycleError("Cargo cores 必须是非负整数")
     env = _environment(request)
     target, platform = _host_target(request.root, env)
-    bwrap_bin = None
-    if "-linux-" in target:
-        from bwrap import resolve_bwrap_binary
-
-        bwrap_bin = resolve_bwrap_binary(request.version, target)
-    package_dir = request.output_dir / "package"
-    archive = request.output_dir / (
-        f"co-cli-{platform}-{request.source_rev[:10]}.tar.gz"
+    entrypoint = "codex.exe" if platform.endswith("-windows") else "codex"
+    metadata = artifact_metadata(
+        {
+            "schemaVersion": 3,
+            "sourceVersion": request.version,
+            "platform": platform,
+            "artifact": {
+                "kind": "standalone-cli",
+                "version": request.version,
+                "target": target,
+                "entrypoint": entrypoint,
+            },
+        }
     )
-    command = [
-        sys.executable,
-        str(request.root / "scripts/build_codex_package.py"),
-        "--variant",
-        "codex",
-        "--target",
-        target,
-        "--package-version",
-        request.version,
-        "--package-dir",
-        str(package_dir),
-        "--cargo-profile",
-        "release",
-        "--archive-output",
-        str(archive),
-    ]
-    if bwrap_bin is not None:
-        command.extend(["--bwrap-bin", str(bwrap_bin)])
     run(
-        command,
+        [sys.executable, "-c", _BUILD_CLI, str(request.root), request.version],
         cwd=request.root,
         env=env,
         capture=OutputMode.INHERIT,
         pass_fds=(request.lock_fd,) if request.lock_fd is not None else (),
     )
-    run(
-        [sys.executable, "-c", _VALIDATE_PACKAGE, str(package_dir), target],
-        cwd=request.root,
-        env=env,
-    )
-    metadata = read_json(package_dir / "codex-package.json")
-    if metadata.get("version") != request.version:
-        raise LifecycleError("官方 package version 与所选官方 tag 不一致")
-    if not archive.is_file():
-        raise LifecycleError("官方 builder 未生成 package archive")
-    return NativePackage(package_dir, archive, platform, metadata)
+    binary = Path(env["CARGO_TARGET_DIR"]) / "release" / entrypoint
+    if binary.is_symlink() or not binary.is_file() or not binary.stat().st_mode & 0o111:
+        raise LifecycleError("Cargo 未生成普通可执行 codex binary")
+    result = run([str(binary), "--version"], cwd=request.root, env=env)
+    if (result.stdout or "").strip() != f"codex-cli {request.version}":
+        raise LifecycleError("CLI --version 与所选官方 tag 不一致")
+    directory = request.output_dir / "artifact"
+    directory.mkdir()
+    shutil.copy2(binary, directory / entrypoint)
+    validate_cli_directory(directory, metadata)
+    archive = request.output_dir / f"co-cli-{platform}-{request.source_rev[:10]}.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        output.add(directory / entrypoint, arcname=entrypoint, recursive=False)
+    return NativePackage(directory, archive, platform, metadata)

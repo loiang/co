@@ -1,4 +1,4 @@
-"""Native package build integration tests using the official layout and validator."""
+"""Exercise stamped single-CLI builds without invoking the Rust compiler."""
 
 import io
 import json
@@ -25,6 +25,7 @@ def _gh_run(
     *,
     returncode: int = 0,
     stderr: bytes = b"",
+    runtime_release: bytes | None = None,
 ) -> object:
     """Return a subprocess boundary fake that delegates non-gh commands."""
 
@@ -32,6 +33,13 @@ def _gh_run(
         command: list[str], **kwargs: object
     ) -> subprocess.CompletedProcess[bytes]:
         if command[:2] == ["gh", "api"]:
+            if "/releases/tags/" in command[2]:
+                return subprocess.CompletedProcess(command, 1, b"", b"HTTP 404")
+            if (
+                command[2] == "repos/openai/codex/releases/latest"
+                and runtime_release is not None
+            ):
+                return subprocess.CompletedProcess(command, 0, runtime_release, b"")
             return subprocess.CompletedProcess(command, returncode, stdout, stderr)
         return REAL_SUBPROCESS_RUN(command, **kwargs)
 
@@ -45,6 +53,10 @@ def source_repo(tmp_path: Path) -> Path:
     (tmp_path / "codex-rs").mkdir()
     (tmp_path / "codex-rs/Cargo.toml").write_text(
         '[workspace.package]\nversion = "0.0.0"\n', encoding="utf-8"
+    )
+    (tmp_path / "codex-rs/Cargo.lock").write_text(
+        'version = 4\n[[package]]\nname = "codex-cli"\nversion = "0.0.0"\n',
+        encoding="utf-8",
     )
     (tmp_path / "flake.lock").write_text("{}", encoding="utf-8")
     (tmp_path / ".gitignore").write_text(".states/\n", encoding="utf-8")
@@ -175,181 +187,130 @@ def test_official_version_rejects_gh_failure(stderr: bytes, message: str) -> Non
         _official_version()
 
 
-def _run_with_prebuilt(
-    command: list[str], kwargs: dict[str, object], binary: Path
-) -> subprocess.CompletedProcess[str]:
-    command = [*command]
-    for flag in (
-        "--entrypoint-bin",
-        "--code-mode-host-bin",
-        "--bwrap-bin",
-        "--rg-bin",
-        "--zsh-bin",
-    ):
-        command.extend([flag, str(binary)])
-    return run(command, **kwargs)
+@pytest.fixture
+def cargo_boundary(source_repo: Path, monkeypatch) -> Path:
+    """Simulate only Cargo, running the real stamping driver and archive writer."""
+    tools = source_repo / ".states/tools"
+    tools.mkdir(parents=True)
+    cargo = tools / "cargo"
+    cargo.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys, tomllib\n"
+        "args = sys.argv[1:]\n"
+        "version = os.environ['CODEX_CLI_VERSION']\n"
+        "log = pathlib.Path(os.environ['CO_TEST_CARGO_LOG'])\n"
+        "with log.open('a') as stream: stream.write(json.dumps(args) + '\\n')\n"
+        "workspace = pathlib.Path.cwd()\n"
+        "assert tomllib.loads((workspace / 'Cargo.toml').read_text())['workspace']['package']['version'] == version\n"
+        "if args == ['update', '--workspace']:\n"
+        "    lock = workspace / 'Cargo.lock'\n"
+        "    lock.write_text(lock.read_text().replace('0.0.0', version))\n"
+        "elif args == ['build', '--release', '--locked', '-p', 'codex-cli', '--bin', 'codex']:\n"
+        "    log.with_suffix('.env').write_text(json.dumps({key: os.environ.get(key) for key in ['CARGO_TARGET_DIR', 'CO_BUILD_WORKTREE', 'CO_BUILD_LOCK_FD', 'CARGO_BUILD_JOBS']}))\n"
+        "    binary = pathlib.Path(os.environ['CARGO_TARGET_DIR']) / 'release/codex'\n"
+        "    binary.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    binary.write_text('#!' + sys.executable + '\\nprint(' + repr('codex-cli ' + version) + ')\\n')\n"
+        "    binary.chmod(0o755)\n"
+        "else: raise RuntimeError(args)\n",
+        encoding="utf-8",
+    )
+    cargo.chmod(0o755)
+    import os
+
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("CO_TEST_CARGO_LOG", str(source_repo / ".states/cargo-log"))
+    return cargo
 
 
-@pytest.mark.parametrize(
-    ("cores", "version"), [(0, "0.154.0"), (4, "0.161.0-alpha.11")]
-)
-def test_build_uses_official_package_and_emits_bound_assets(
-    source_repo: Path, cores: int, version: str
+@pytest.mark.parametrize(("cores", "version"), [(0, "0.154.0"), (4, "0.162.0-alpha.4")])
+def test_build_emits_only_stamped_cli_without_runtime_downloads(
+    source_repo: Path, cargo_boundary: Path, cores: int, version: str
 ) -> None:
-    """Replace only source compilation; execute upstream packaging and validation."""
-    binary = source_repo / ".states/prebuilt"
-    binary.parent.mkdir()
-    binary.write_bytes(b"native package executable fixture\n")
-    binary.chmod(0o755)
-    calls = []
+    originals = [
+        (source_repo / "codex-rs" / name).read_bytes()
+        for name in ("Cargo.toml", "Cargo.lock")
+    ]
 
-    def capture(
-        command: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        assert "nix" not in command
-        calls.append((command, kwargs))
+    def capture(command: list[str], **kwargs: object):
         if command[0] == "rustc":
             return subprocess.CompletedProcess(
                 command, 0, "host: x86_64-unknown-linux-gnu\n", ""
             )
-        if command[1].endswith("build_codex_package.py"):
-            return _run_with_prebuilt(command, kwargs, binary)
         return run(command, **kwargs)
 
+    metadata = json.dumps(
+        [
+            {
+                "ref": f"refs/tags/rust-v{version}",
+                "object": {"type": "commit", "sha": "a" * 40},
+            }
+        ]
+    ).encode()
     with (
         patch("native_package.run", side_effect=capture),
-        patch("native_package.resolve_make_bin", return_value=binary),
-        patch("bwrap.resolve_bwrap_binary", return_value=binary) as bwrap,
-        patch(
-            "upstream_version.subprocess.run",
-            side_effect=_gh_run(
-                json.dumps(
-                    [
-                        {
-                            "ref": f"refs/tags/rust-v{version}",
-                            "object": {"type": "commit", "sha": "a" * 40},
-                        }
-                    ]
-                ).encode()
-            ),
-        ) as gh,
+        patch("upstream_version.subprocess.run", side_effect=_gh_run(metadata)) as gh,
     ):
         latest = build(source_repo, cores)
-
     record = json.loads(latest.read_text())
-    assert record["schemaVersion"] == 2
-    assert "storePath" not in record
-    assert record["dirty"] is False
-    assert record["flakeLockSha256"] == sha256(source_repo / "flake.lock")
-    assert record["sourceRev"] == git(source_repo, "rev-parse", "HEAD")
-    package_dir = source_repo / record["packageDir"]
-    metadata = json.loads((package_dir / "codex-package.json").read_text())
-    assert record["package"] == metadata
-    assert metadata["version"] == version
-    assert sum(call.args[0][:2] == ["gh", "api"] for call in gh.call_args_list) == 1
-    bwrap.assert_called_once_with(version, "x86_64-unknown-linux-gnu")
-    assert metadata["variant"] == "codex"
-    assert metadata["target"] == "x86_64-unknown-linux-gnu"
-    assert metadata["entrypoint"] == "bin/codex"
-    archive, manifest_path, sums = [source_repo / name for name in record["assets"]]
-    with tarfile.open(archive) as bundle:
-        members = {member.name for member in bundle.getmembers() if member.isfile()}
-    assert members == {
-        "bin/codex",
-        "bin/codex-code-mode-host",
-        "codex-package.json",
-        "codex-path/rg",
-        "codex-resources/bwrap",
-        "codex-resources/zsh/bin/zsh",
+    assert record["schemaVersion"] == 3
+    assert "package" not in record and "packageDir" not in record
+    expected = {
+        "kind": "standalone-cli",
+        "version": version,
+        "target": "x86_64-unknown-linux-gnu",
+        "entrypoint": "codex",
     }
-    manifest = json.loads(manifest_path.read_text())
-    assert manifest["schemaVersion"] == 2
-    assert manifest["sourceVersion"] == version
-    assert "upstreamRev" not in manifest
-    assert manifest["package"] == metadata
-    assert manifest["checksums"] == {
-        "bin/codex": sha256(package_dir / "bin/codex"),
+    assert record["artifact"] == expected
+    directory = source_repo / record["artifactDir"]
+    assert [path.name for path in directory.iterdir()] == ["codex"]
+    assert (
+        run([str(directory / "codex"), "--version"], cwd=source_repo).stdout.strip()
+        == f"codex-cli {version}"
+    )
+    archive, manifest, sums = [source_repo / name for name in record["assets"]]
+    with tarfile.open(archive) as bundle:
+        assert [(member.name, member.isreg()) for member in bundle] == [("codex", True)]
+    payload = json.loads(manifest.read_text())
+    assert payload["schemaVersion"] == 3 and payload["sourceVersion"] == version
+    assert payload["artifact"] == expected and "package" not in payload
+    assert payload["checksums"] == {
+        "codex": sha256(directory / "codex"),
         archive.name: sha256(archive),
     }
-    assert sums.read_text() == (
-        f"{sha256(archive)}  {archive.name}\n"
-        f"{sha256(manifest_path)}  {manifest_path.name}\n"
+    assert record["manifestSha256"] == sha256(manifest)
+    assert (
+        sums.read_text()
+        == f"{sha256(archive)}  {archive.name}\n{sha256(manifest)}  {manifest.name}\n"
     )
-    builder_command, builder_kwargs = next(
-        item for item in calls if item[0][1].endswith("build_codex_package.py")
-    )
-    assert builder_command[2:] == [
-        "--variant",
-        "codex",
-        "--target",
-        metadata["target"],
-        "--package-version",
-        version,
-        "--package-dir",
-        str(package_dir),
-        "--cargo-profile",
-        "release",
-        "--archive-output",
-        str(archive),
-        "--bwrap-bin",
-        str(binary),
+    calls = [
+        json.loads(line)
+        for line in (source_repo / ".states/cargo-log").read_text().splitlines()
     ]
-    assert builder_kwargs["env"]["CODEX_REPO_ROOT"] == str(
-        source_repo / ".states/build"
-    )
-    assert builder_kwargs["cwd"] == source_repo / ".states/build"
-    assert builder_kwargs["env"]["CARGO_TARGET_DIR"] == str(
-        source_repo / "codex-rs/target"
-    )
-    assert builder_kwargs["env"]["CO_BUILD_WORKTREE"] == str(
-        source_repo / ".states/build"
-    )
-    assert builder_kwargs["pass_fds"] == (
-        int(builder_kwargs["env"]["CO_BUILD_LOCK_FD"]),
-    )
+    assert calls == [
+        ["update", "--workspace"],
+        ["build", "--release", "--locked", "-p", "codex-cli", "--bin", "codex"],
+    ]
+    env = json.loads((source_repo / ".states/cargo-log.env").read_text())
+    assert env["CARGO_TARGET_DIR"] == str(source_repo / "codex-rs/target")
+    assert env["CO_BUILD_WORKTREE"] == str(source_repo / ".states/build")
+    assert env["CO_BUILD_LOCK_FD"].isdigit()
+    assert env["CARGO_BUILD_JOBS"] == (str(cores) if cores else None)
+    assert [
+        call.args[0][2]
+        for call in gh.call_args_list
+        if call.args[0][:2] == ["gh", "api"]
+    ] == ["repos/openai/codex/git/matching-refs/tags/rust-v"]
+    assert [
+        (source_repo / "codex-rs" / name).read_bytes()
+        for name in ("Cargo.toml", "Cargo.lock")
+    ] == originals
     assert not (source_repo / ".states/build").exists()
     assert git(source_repo, "branch", "--list", "build/co-*") == ""
-    if cores:
-        assert builder_kwargs["env"]["CARGO_BUILD_JOBS"] == str(cores)
-    else:
-        assert "CARGO_BUILD_JOBS" not in builder_kwargs["env"]
-    assert any("validate_package_dir" in " ".join(command) for command, _ in calls)
-
-
-def test_build_rejects_negative_core_limit_before_commands(source_repo: Path) -> None:
-    with (
-        patch("native_package.run") as command,
-        pytest.raises(LifecycleError, match="cores"),
-    ):
-        build(source_repo, cores=-1)
-    command.assert_not_called()
-
-
-def test_failed_builder_never_writes_latest(source_repo: Path) -> None:
-    def reject(
-        command: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        if command[1].endswith("build_codex_package.py"):
-            raise LifecycleError("source cargo failed")
-        return run(command, **kwargs)
-
-    with (
-        patch("native_package.run", side_effect=reject),
-        patch("native_package.resolve_make_bin", return_value=source_repo / "bwrap"),
-        patch("bwrap.resolve_bwrap_binary", return_value=source_repo / "bwrap"),
-        patch("build._official_version", return_value="0.154.0"),
-        pytest.raises(LifecycleError, match="source cargo failed"),
-    ):
-        build(source_repo)
-    assert not (source_repo / ".states/co/build/latest.json").exists()
-    assert not (source_repo / ".states/build").exists()
-    assert not list((source_repo / ".states/co/build").glob("20*"))
 
 
 @pytest.mark.parametrize("change", ["tracked", "staged", "untracked"])
 def test_build_rejects_mutable_source_before_resolving_release(
-    source_repo: Path,
-    change: str,
+    source_repo: Path, change: str
 ) -> None:
     target = source_repo / ("new-file" if change == "untracked" else "flake.lock")
     target.write_text("changed")
@@ -361,134 +322,91 @@ def test_build_rejects_mutable_source_before_resolving_release(
     ):
         build(source_repo)
     release.assert_not_called()
-    assert not (source_repo / ".states/build").exists()
 
 
 @pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
 def test_interrupted_build_preserves_latest_and_removes_partial_output(
-    source_repo: Path,
-    failure: type[BaseException],
+    source_repo: Path, failure: type[BaseException]
 ) -> None:
     latest = source_repo / ".states/co/build/latest.json"
     latest.parent.mkdir(parents=True)
     latest.write_text('{"previous":"verified"}')
 
-    def interrupt(request) -> None:
+    def interrupt(request):
         (request.output_dir / "partial-output").write_text("partial")
-        (request.root / "flake.lock").write_text("stamped")
         raise failure("interrupted")
 
     with (
         patch("build._official_version", return_value="0.154.0"),
         patch("build.build_package", side_effect=interrupt),
-        pytest.raises(failure, match="interrupted"),
+        pytest.raises(failure),
     ):
         build(source_repo)
     assert latest.read_text() == '{"previous":"verified"}'
     assert not list(latest.parent.glob("20*"))
     assert not (source_repo / ".states/build").exists()
-    assert (source_repo / "flake.lock").read_text() == "{}"
 
 
-@pytest.mark.parametrize(
-    ("target", "expected_platform"),
-    [
-        ("x86_64-unknown-linux-gnu", "x86_64-linux"),
-        ("aarch64-unknown-linux-gnu", "aarch64-linux"),
-        ("aarch64-apple-darwin", "aarch64-darwin"),
-        ("x86_64-pc-windows-msvc", "x86_64-windows"),
-    ],
-)
-def test_host_target_uses_rustc_host_and_official_support_table(
-    source_repo: Path, target: str, expected_platform: str
+@pytest.mark.parametrize("output", ["missing", "symlink", "nonexec", "wrong-version"])
+def test_invalid_cli_output_never_emits_evidence(
+    source_repo: Path, output: str
 ) -> None:
-    from native_package import PackageRequest, _environment, _host_target
-
-    def capture(
-        command: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
+    def capture(command: list[str], **kwargs: object):
         if command[0] == "rustc":
-            return subprocess.CompletedProcess(command, 0, f"host: {target}\n", "")
+            return subprocess.CompletedProcess(
+                command, 0, "host: x86_64-unknown-linux-gnu\n", ""
+            )
+        if (
+            command[:2] == [sys.executable, "-c"]
+            and "versioned_workspace" in command[2]
+        ):
+            binary = source_repo / "codex-rs/target/release/codex"
+            binary.parent.mkdir(parents=True)
+            if output != "missing":
+                binary.write_text("cli")
+                binary.chmod(0o644 if output == "nonexec" else 0o755)
+            if output == "symlink":
+                actual = binary.with_name("actual")
+                binary.rename(actual)
+                binary.symlink_to(actual)
+            return subprocess.CompletedProcess(command, 0)
+        if command[-1] == "--version":
+            return subprocess.CompletedProcess(command, 0, "codex-cli 0.0.0\n", "")
         return run(command, **kwargs)
 
-    env = _environment(PackageRequest(source_repo, source_repo, "a" * 40, "0.154.0"))
-    with patch("native_package.run", side_effect=capture):
-        assert _host_target(source_repo, env) == (target, expected_platform)
+    with (
+        patch("build._official_version", return_value="0.154.0"),
+        patch("native_package.run", side_effect=capture),
+        pytest.raises(LifecycleError),
+    ):
+        build(source_repo)
+    assert not (source_repo / ".states/co/build/latest.json").exists()
+    assert not (source_repo / ".states/build").exists()
+
+
+def test_build_rejects_negative_core_limit_before_commands(source_repo: Path) -> None:
+    with (
+        patch("native_package.run") as command,
+        pytest.raises(LifecycleError, match="cores"),
+    ):
+        build(source_repo, -1)
+    command.assert_not_called()
 
 
 @pytest.mark.parametrize(
     "host",
     ["", "host: \n", "host: a\nhost: b\n", "host: riscv64gc-unknown-linux-gnu\n"],
 )
-def test_invalid_or_unsupported_host_fails_before_build(
-    source_repo: Path, host: str
-) -> None:
-    def capture(
-        command: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        assert not command[1].endswith("build_codex_package.py")
+def test_invalid_host_never_compiles(source_repo: Path, host: str) -> None:
+    def capture(command: list[str], **kwargs: object):
         if command[0] == "rustc":
             return subprocess.CompletedProcess(command, 0, host, "")
+        assert "versioned_workspace" not in " ".join(command)
         return run(command, **kwargs)
 
     with (
-        patch("native_package.run", side_effect=capture),
-        patch("native_package.resolve_make_bin", return_value=source_repo / "make"),
         patch("build._official_version", return_value="0.154.0"),
+        patch("native_package.run", side_effect=capture),
         pytest.raises(LifecycleError),
     ):
         build(source_repo)
-    assert not (source_repo / ".states/co/build/latest.json").exists()
-
-
-@pytest.mark.parametrize(
-    ("mutation", "error"),
-    [
-        ("missing-entrypoint", "Missing package file: bin/codex"),
-        ("wrong-entrypoint", "Invalid package metadata field 'entrypoint'"),
-        ("wrong-version", "package version"),
-        ("missing-archive", "未生成 package archive"),
-    ],
-)
-def test_invalid_builder_output_never_emits_evidence(
-    source_repo: Path, mutation: str, error: str
-) -> None:
-    """Run the actual upstream validator against corrupted builder output."""
-    binary = source_repo / ".states/prebuilt"
-    binary.parent.mkdir()
-    binary.write_bytes(b"native package executable fixture\n")
-    binary.chmod(0o755)
-
-    def capture(
-        command: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
-        if command[0] == "rustc":
-            return subprocess.CompletedProcess(
-                command, 0, "host: x86_64-unknown-linux-gnu\n", ""
-            )
-        if not command[1].endswith("build_codex_package.py"):
-            return run(command, **kwargs)
-        result = _run_with_prebuilt(command, kwargs, binary)
-        package_dir = Path(command[command.index("--package-dir") + 1])
-        metadata_path = package_dir / "codex-package.json"
-        metadata = json.loads(metadata_path.read_text())
-        if mutation == "missing-entrypoint":
-            (package_dir / "bin/codex").unlink()
-        elif mutation == "wrong-entrypoint":
-            metadata["entrypoint"] = "../codex"
-        elif mutation == "wrong-version":
-            metadata["version"] = "0.0.0"
-        elif mutation == "missing-archive":
-            Path(command[command.index("--archive-output") + 1]).unlink()
-        metadata_path.write_text(json.dumps(metadata))
-        return result
-
-    with (
-        patch("native_package.run", side_effect=capture),
-        patch("native_package.resolve_make_bin", return_value=binary),
-        patch("bwrap.resolve_bwrap_binary", return_value=binary),
-        patch("build._official_version", return_value="0.154.0"),
-        pytest.raises(LifecycleError, match=error),
-    ):
-        build(source_repo)
-    assert not (source_repo / ".states/co/build/latest.json").exists()

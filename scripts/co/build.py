@@ -1,4 +1,4 @@
-"""Build the upstream native package and emit source-bound release assets."""
+"""Compile the standalone Codex CLI and emit source-bound release assets."""
 
 import shutil
 from pathlib import Path
@@ -30,12 +30,12 @@ def _emit_assets(
     binary = package.directory / entrypoint
     manifest_path = build_dir / f"co-manifest-{identity['sourceRev'][:10]}.json"
     manifest = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "repository": "loiang/co",
         "sourceRev": identity["sourceRev"],
         "sourceVersion": version,
         "platform": package.platform,
-        "package": package.metadata,
+        "artifact": package.metadata,
         "checksums": {entrypoint: sha256(binary), archive.name: sha256(archive)},
     }
     write_json(manifest_path, manifest)
@@ -46,11 +46,11 @@ def _emit_assets(
         encoding="utf-8",
     )
     record = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         **identity,
         "completedAt": timestamp(),
-        "packageDir": str(package.directory.relative_to(root)),
-        "package": package.metadata,
+        "artifactDir": str(package.directory.relative_to(root)),
+        "artifact": package.metadata,
         "manifestSha256": sha256(manifest_path),
         "assets": [
             str(path.relative_to(root)) for path in (archive, manifest_path, checksums)
@@ -62,7 +62,7 @@ def _emit_assets(
 
 
 def build(repository: Path, cores: int = 0) -> Path:
-    """Build one complete native package with the upstream grouped Cargo builder.
+    """Build one source-stamped CLI without fetching auxiliary runtime binaries.
 
     Args:
         repository: Checkout whose source and lock identities bind the assets.
