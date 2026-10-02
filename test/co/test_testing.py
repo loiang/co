@@ -35,6 +35,8 @@ def test_tests_use_locked_nix_shell_without_compilation(tmp_path: Path) -> None:
             "-m",
             "pytest",
             "-q",
+            "-m",
+            "not compilation",
             "test/co",
         ]
     ]

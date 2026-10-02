@@ -10,7 +10,8 @@ def run_tests(repository: Path) -> Path:
     """Run lifecycle regressions in the candidate shell.
 
     The candidate's locked flake supplies Python so host tool versions cannot
-    change the verification result. Compilation is owned by ``co build``.
+    change the verification result. Compilation is owned by ``co build``;
+    tests explicitly marked compilation are available only on separate runs.
 
     Args:
         repository: Candidate checkout whose locked environment owns the run.
@@ -30,6 +31,8 @@ def run_tests(repository: Path) -> Path:
             "-m",
             "pytest",
             "-q",
+            "-m",
+            "not compilation",
             "test/co",
         ]
     ]

@@ -42,6 +42,7 @@ def workspace(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.mark.compilation
 def test_compiled_package_and_components_follow_release_without_source_edits(
     workspace: Path, tmp_path: Path
 ) -> None:
@@ -103,6 +104,7 @@ def test_lock_refresh_failure_preserves_original_files(workspace: Path) -> None:
     assert (manifest.read_bytes(), lock.read_bytes()) == original
 
 
+@pytest.mark.compilation
 def test_managed_build_worktree_stamps_in_place_and_uses_persistent_target(
     workspace: Path,
     tmp_path: Path,

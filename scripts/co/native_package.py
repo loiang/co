@@ -152,7 +152,7 @@ def build_package(request: PackageRequest) -> NativePackage:
     )
     metadata = read_json(package_dir / "codex-package.json")
     if metadata.get("version") != request.version:
-        raise LifecycleError("官方 package version 与解析的 stable release 不一致")
+        raise LifecycleError("官方 package version 与所选官方 tag 不一致")
     if not archive.is_file():
         raise LifecycleError("官方 builder 未生成 package archive")
     return NativePackage(package_dir, archive, platform, metadata)
